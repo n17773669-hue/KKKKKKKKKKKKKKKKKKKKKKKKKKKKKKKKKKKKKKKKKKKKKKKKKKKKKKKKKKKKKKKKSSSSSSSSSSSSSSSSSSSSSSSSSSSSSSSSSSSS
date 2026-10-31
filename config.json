@@ -1,0 +1,10 @@
+{
+  "prefix": ".",
+  "bat_status": true,
+  "status_mode": "idle",
+  "status_messages": [
+    "🤖 {guilds} server | {members} members",
+    "⚡ Ping: {ping}ms | {latency_status}",
+    "💾 RAM: {ram} | bot đã hoạt động: {uptime}"
+  ]
+}

@@ -1,0 +1,16 @@
+discord.py[voice]
+yt-dlp
+yt-dlp[default]
+PyNaCl
+davey
+bgutil-ytdlp-pot-provider
+google-genai
+aiohttp
+supabase==2.9.1
+supabase
+flask
+requests
+edge-tts
+nodejs
+wavelink>=3.0.0
+
