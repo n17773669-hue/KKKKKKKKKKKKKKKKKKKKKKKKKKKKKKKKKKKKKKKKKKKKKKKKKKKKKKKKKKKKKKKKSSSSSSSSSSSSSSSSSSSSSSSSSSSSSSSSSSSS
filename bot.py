@@ -5405,7 +5405,6 @@ async def dashboard_outbox_loop():
 
 async def main():
     async with bot:
-        await bot.load_extension("music")
         await bot.load_extension("noitu")
         await bot.load_extension("ai")
         await bot.load_extension("lixi_admin")
