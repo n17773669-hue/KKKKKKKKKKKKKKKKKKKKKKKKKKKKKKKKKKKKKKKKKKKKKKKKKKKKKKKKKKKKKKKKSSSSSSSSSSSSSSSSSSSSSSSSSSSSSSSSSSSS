@@ -5413,7 +5413,6 @@ async def main():
         await bot.load_extension("status") 
         await bot.load_extension("server_manager")
         await bot.load_extension("quest")
-        await bot.load_extension("nuke")
         await bot.load_extension("fun")
         await bot.load_extension("pingbot")
         await bot.load_extension("gif")
