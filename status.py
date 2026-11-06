@@ -113,7 +113,7 @@ def patch_gateway_identify():
     original_identify = DiscordWebSocket.identify
 
     async def patched_identify(self):
-        props = PLATFORMS.get(load_cfg().get("platform", "vr"))  # "default" -> None
+        props = PLATFORMS.get(load_cfg().get("platform", "ios"))  # "default" -> None
         if props is None:
             await original_identify(self)
             return
@@ -294,7 +294,7 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
             f"• Đổi câu mỗi: `{cfg.get('status_delay', 5)}` giây\n"
             f"• Link stream: {cfg.get('stream_url') or DEFAULT_STREAM_URL}\n"
             f"• Số câu status: `{len(msgs)}`\n"
-            f"• Thiết bị: `{cfg.get('platform', 'vr')}`",
+            f"• Thiết bị: `{cfg.get('platform', 'ios')}`",
             ephemeral=True,
         )
 
