@@ -133,7 +133,7 @@ DEFAULT_CONFIG = {
     "bat_bot_guard": True,
     "activity_type": "playing",
     "force_stream": False,
-    "platform": "vr",
+    "platform": "ios",
     "stream_url": "https://www.youtube.com/watch?v=9svI65nxVhc",
     "site_title": "KSBot Command Center",
     "bg_url": "",
@@ -810,7 +810,7 @@ PAGE_JS = """
             if (c.checked) p.set(c.name, 'on');
         });
         var pl = form.querySelector('input[name="platform"]:checked');
-        p.set('platform', pl ? pl.value : 'vr');
+        p.set('platform', pl ? pl.value : 'ios');
         return p;
     }
 
@@ -1323,7 +1323,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                 <p class="sub">Màu chấm, tốc độ xoay và nội dung các dòng status.</p>
 
                 <div class="field">
-                    <span class="label">Màu chấm trạng thái</span>
+                    <span class="label">Màu chấm &amp; thiết bị hiển thị</span>
                     <div class="modes">
                         <label class="mode"><input type="radio" name="status_mode" value="online" __M_ONLINE__>
                             <span><i class="dot" style="background:#3fc380"></i><div>Online<small>Chấm xanh</small></div></span></label>
@@ -1335,10 +1335,9 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                             <span><i class="dot" style="background:#5c6370"></i><div>Invisible<small>Ẩn, nhìn như offline</small></div></span></label>
                         <label class="mode"><input type="radio" name="status_mode" value="stream" __M_STREAM__>
                             <span><i class="dot" style="background:#9b59ff"></i><div>Stream<small>Chấm tím + nút Xem</small></div></span></label>
+                        __PLATFORMS__
                     </div>
-                    <span class="label sub-label">Thiết bị (biểu tượng điện thoại / VR thay cho chấm)</span>
-                    <div class="modes">__PLATFORMS__</div>
-                    <p class="hint">Đổi thiết bị phải bấm <b>Khởi động lại</b> ở tab Tổng quan thì Discord mới nhận. Đổi màu chấm thì không cần.</p>
+                    <p class="hint">Hàng này gồm màu chấm (Online, Idle, DND, Invisible, Stream) và thiết bị (VR, Android, iOS, Mặc định), chọn mỗi nhóm một nút. Đổi thiết bị phải bấm <b>Khởi động lại</b> ở tab Tổng quan thì Discord mới nhận. Đổi màu chấm thì không cần.</p>
                 </div>
 
                 <div class="field">
@@ -1538,9 +1537,9 @@ def render_page(config):
         for k, icon, name, desc in ACTIVITY_TYPES
     )
 
-    platform = config.get("platform", "vr")
+    platform = config.get("platform", "ios")
     if platform not in PLATFORM_KEYS:
-        platform = "vr"
+        platform = "ios"
     platform_html = "".join(
         '<label class="mode"><input type="radio" name="platform" value="%(k)s" %(c)s>'
         '<span><span class="mode-ico">%(i)s</span>'
@@ -1723,9 +1722,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if activity_type not in ACTIVITY_LABELS:
             activity_type = "playing"
 
-        platform = parsed.get("platform", ["vr"])[0]
+        platform = parsed.get("platform", ["ios"])[0]
         if platform not in PLATFORM_KEYS:
-            platform = "vr"
+            platform = "ios"
 
         prefix = parsed.get("prefix", ["!"])[0].strip() or "!"
 
