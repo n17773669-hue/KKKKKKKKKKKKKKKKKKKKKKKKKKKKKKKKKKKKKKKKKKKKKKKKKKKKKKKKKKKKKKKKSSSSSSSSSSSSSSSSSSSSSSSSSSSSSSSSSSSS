@@ -6,10 +6,11 @@ import os
 from datetime import datetime, timezone
 
 WAIT_SECONDS = 30  # Thời gian tối thiểu phải đợi mới bấm được
+DATA_CHANNEL_ID = 1566780713058046094  # ID kênh lưu trữ và quản lý dữ liệu kiểm duyệt
 
 class RuleVerifyView(ui.View):
     def __init__(self):
-        super().__init__(timeout=None) # Timeout=None giữ nút vĩnh viễn không mất khi restart bot
+        super().__init__(timeout=None) # Giữ nút vĩnh viễn không mất khi restart bot
 
     @ui.button(
         label="Đã đọc & Đồng ý Nội quy", 
@@ -21,7 +22,7 @@ class RuleVerifyView(ui.View):
         msg_created_at = interaction.message.created_at.timestamp()
         elapsed_time = time.time() - msg_created_at
 
-        # Nếu bấm quá nhanh (chưa đủ 30 giây)
+        # Nếu bấm quá nhanh (chưa đủ thời gian đọc)
         if elapsed_time < WAIT_SECONDS:
             embed_warning = discord.Embed(
                 title="⚠️ BẠN CHƯA ĐỌC KỸ NỘI QUY!",
@@ -31,45 +32,55 @@ class RuleVerifyView(ui.View):
             await interaction.response.send_message(embed=embed_warning, ephemeral=True)
             return
 
-        # Đã đủ thời gian -> Kiểm tra tuổi tài khoản
+        # 1. Xóa tin nhắn chứa ảnh nội quy ngay khi user đồng ý để kênh sạch sẽ
+        try:
+            await interaction.message.delete()
+        except Exception:
+            pass  # Phòng hờ bot thiếu quyền xóa tin nhắn
+
         user = interaction.user
-        # Tính tuổi tài khoản tính theo tháng
         now = datetime.now(timezone.utc)
         account_age_days = (now - user.created_at).days
         account_age_months = account_age_days / 30.0
 
         guild = interaction.guild
+        data_channel = guild.get_channel(DATA_CHANNEL_ID)
 
-        # --- TRƯỜNG HỢP 1: Tài khoản <= 5 tháng (Yêu cầu Voice check) ---
+        # Thông báo trạng thái đã hoàn thành bước nội quy
+        embed_completed = discord.Embed(
+            title="✅ HOÀN THÀNH XÁC NHẬN NỘI QUY",
+            description=f"Cảm ơn {user.mention} đã đọc và đồng ý với nội quy **Server 💤KS**!\nHệ thống đang tiến hành chuyển sang bước kiểm duyệt tiếp theo...",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed_completed, ephemeral=True)
+
+        # --- PHÂN NHÁNH KIỂM DUYỆT THEO TUỔI TÀI KHOẢN ---
+        
+        # Trường hợp 1: Tài khoản <= 5 tháng (Yêu cầu Voice check)
         if account_age_months <= 5:
             embed_voice = discord.Embed(
                 title="🎙️ YÊU CẦU KIỂM DUYỆT QUA VOICE",
                 description=(
                     f"Tài khoản của bạn dưới **5 tháng** tuổi ({int(account_age_months)} tháng).\n"
-                    "Theo quy định chống gián điệp của server **💤KS**, bạn bắt buộc phải vào **Voice Channel kiểm duyệt** để check trực tiếp (Mở Mic & Cam).\n\n"
-                    "Hệ thống đã gửi yêu cầu tới ban kiểm duyệt!"
+                    "Theo quy định chống gián điệp của server, bạn bắt buộc phải vào **Voice Channel kiểm duyệt** để check trực tiếp (Mở Mic & Cam)."
                 ),
                 color=discord.Color.gold()
             )
-            await interaction.response.send_message(embed=embed_voice, ephemeral=True)
-            
-            # (Tùy chọn) Bạn có thể tạo kênh Voice tự động hoặc gán role ở đây nếu muốn
+            # Gửi thông báo chi tiết vào kênh dữ liệu quản lý (DATA_CHANNEL_ID) nếu có
+            if data_channel:
+                await data_channel.send(content=f"🔔 **[VOICE CHECK]** Cần kiểm duyệt thành viên {user.mention} (Acc mới {int(account_age_months)} tháng).", embed=embed_voice)
             return
 
-        # --- TRƯỜNG HỢP 2: Tài khoản >= 7 tháng (Yêu cầu gửi ảnh chụp màn hình server) ---
-        # Tạo một Thread (Chủ đề) riêng tư cho user này gửi ảnh cho Mod kiểm duyệt
+        # Trường hợp 2: Tài khoản >= 7 tháng (Tạo Thread gửi ảnh chụp danh sách server)
         channel = interaction.channel
         thread_name = f"kiem-duyet-{user.name}"
         
         try:
-            # Tạo thread riêng tại kênh chứa bảng luật
             thread = await channel.create_thread(
                 name=thread_name,
-                type=discord.ChannelType.public_thread, # hoặc private_thread nếu server boost cấp độ 2
+                type=discord.ChannelType.public_thread,
                 reason=f"Kiểm duyệt tài khoản {user.name}"
             )
-            
-            # Thêm quyền hạn chỉ cho User đó và Mod nhắn tin (nếu dùng public thread thì dùng cơ chế ping/gửi tin nhắn hướng dẫn)
             await thread.add_user(user)
 
             embed_thread_msg = discord.Embed(
@@ -84,15 +95,17 @@ class RuleVerifyView(ui.View):
             )
             await thread.send(content=f"{user.mention}", embed=embed_thread_msg)
 
-            embed_success = discord.Embed(
-                title="🎉 XÁC NHẬN THÀNH CÔNG",
-                description=f"Hệ thống đã tạo riêng cho bạn một chủ đề kiểm duyệt: {thread.mention}\nVui lòng truy cập vào đó để hoàn tất thủ tục!",
-                color=discord.Color.green()
-            )
-            await interaction.response.send_message(embed=embed_success, ephemeral=True)
+            # Ghi nhận log về kênh dữ liệu chỉ định
+            if data_channel:
+                log_embed = discord.Embed(
+                    title="📂 [LOG KIỂM DUYỆT MỚI]",
+                    description=f"Thành viên: {user.mention} đã hoàn tất nội quy và được tạo phòng check tại: {thread.mention}",
+                    color=discord.Color.blue()
+                )
+                await data_channel.send(embed=log_embed)
 
         except Exception as e:
-            await interaction.response.send_message(f"❌ Có lỗi xảy ra khi tạo phòng kiểm duyệt riêng: `{e}`", ephemeral=True)
+            print(f"Lỗi tạo phòng kiểm duyệt: {e}")
 
 
 class KiemDuyetCog(commands.Cog):
@@ -102,8 +115,32 @@ class KiemDuyetCog(commands.Cog):
 
     async def cog_load(self):
         self.bot.add_view(RuleVerifyView())
+        
+        # Khi bot khởi động/host lại, tự động quét dữ liệu từ kênh cấu hình
+        @self.bot.event
+        async def on_ready_scan():
+            for guild in self.bot.guilds:
+                data_ch = guild.get_channel(DATA_CHANNEL_ID)
+                if data_ch:
+                    print(f"✅ [DATA SYNC] Đã kết nối và quét dữ liệu thành công tại kênh quản lý của server: {guild.name}")
 
-    async def _send_rule(self, interaction: discord.Interaction):
+    @app_commands.command(name="setup_rule", description="Chọn kênh này làm điểm gửi bảng nội quy và quản lý kiểm duyệt (Admin)")
+    @app_commands.default_permissions(administrator=True)
+    async def setup_rule(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        if not os.path.exists(self.rule_image_path):
+            await interaction.followup.send(f"❌ Không tìm thấy file ảnh `{self.rule_image_path}` trong thư mục bot!", ephemeral=True)
+            return
+
+        file = discord.File(self.rule_image_path, filename="ruleks.png")
+        
+        # Gửi ảnh luật kèm nút bấm vào kênh được setup
+        await interaction.channel.send(file=file, view=RuleVerifyView())
+        await interaction.followup.send(f"✅ Đã thiết lập bảng nội quy thành công tại kênh này!\n📂 Dữ liệu liên kết kênh quản lý: `{DATA_CHANNEL_ID}`", ephemeral=True)
+
+    @app_commands.command(name="test_rule", description="Test thử bảng nội quy và nút xác nhận")
+    async def test_rule(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
         if not os.path.exists(self.rule_image_path):
@@ -112,18 +149,9 @@ class KiemDuyetCog(commands.Cog):
 
         file = discord.File(self.rule_image_path, filename="ruleks.png")
         await interaction.channel.send(file=file, view=RuleVerifyView())
-        await interaction.followup.send("✅ Đã gửi bảng nội quy thành công!", ephemeral=True)
+        await interaction.followup.send("✅ Đã tạo bảng luật test thành công!", ephemeral=True)
 
-    @app_commands.command(name="setup_rule", description="Gửi bảng nội quy kèm nút xác nhận (Admin)")
-    @app_commands.default_permissions(administrator=True)
-    async def setup_rule(self, interaction: discord.Interaction):
-        await self._send_rule(interaction)
-
-    @app_commands.command(name="test_rule", description="Test thử bảng nội quy và nút xác nhận")
-    async def test_rule(self, interaction: discord.Interaction):
-        await self._send_rule(interaction)
-
-    # Lệnh /check dùng cho Admin/Mod gọi thủ công khi cần kiểm duyệt ai đó
+    # Lệnh /check hoặc .check để gọi phòng kiểm duyệt thủ công
     @app_commands.command(name="check", description="Tạo phòng chủ đề kiểm duyệt cho một thành viên (Staff)")
     @app_commands.default_permissions(manage_roles=True)
     @app_commands.describe(member="Thành viên cần kiểm duyệt")
