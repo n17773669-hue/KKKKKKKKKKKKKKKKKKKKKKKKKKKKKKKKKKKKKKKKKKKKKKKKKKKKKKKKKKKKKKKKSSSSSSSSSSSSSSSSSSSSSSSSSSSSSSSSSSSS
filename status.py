@@ -1,8 +1,7 @@
-
 """Module đổi status luân phiên cho bot (extension: bot.load_extension("status")).
 
 Đọc config.json (do dashboard hoặc lệnh Discord ghi): bat_status, status_messages,
-status_delay, status_mode, activity_type, force_stream, stream_url, prefix.
+status_delay, status_mode, activity_type, force_stream, stream_url, prefix, platform.
 
 Slash command (CHỈ owner, ID bên dưới), phản hồi ẩn chỉ owner thấy:
     /status info                xem cấu hình hiện tại
@@ -15,9 +14,11 @@ Slash command (CHỈ owner, ID bên dưới), phản hồi ẩn chỉ owner th�
     /status list
     /status url <link twitch/youtube>
     /status vars
+    /status platform <vr|android|ios|default>   (cần restart)
+    /status restart             khởi động lại bot
 
 LƯU Ý: extension này phải được load TRƯỚC khi bot kết nối Discord
-(ví dụ trong setup_hook hoặc trước bot.run) thì patch VR mới có tác dụng.
+(ví dụ trong setup_hook hoặc trước bot.run) thì patch thiết bị mới có tác dụng.
 """
 import json
 import os
@@ -53,48 +54,12 @@ STATUSES = {
     "invisible": discord.Status.invisible,
 }
 
-
-# ----------------------------------------------------------------------
-# Patch Gateway identify để hiển thị dưới dạng thiết bị VR
-# Giữ nguyên payload gốc của discord.py (shard, intents, presence...) và chỉ
-# thay "properties", nên không bị lệch phiên bản discord.py.
-# ----------------------------------------------------------------------
-def patch_gateway_identify():
-    try:
-        from discord.gateway import DiscordWebSocket
-    except Exception as e:
-        print(f"[PATCH] Không patch được gateway: {e!r}", flush=True)
-        return
-    if getattr(DiscordWebSocket, "_vr_patched", False):
-        return
-
-    original_identify = DiscordWebSocket.identify
-
-    async def patched_identify(self):
-        original_send = self.send_as_json
-
-        async def send(data):
-            if isinstance(data, dict) and data.get("op") == self.IDENTIFY:
-                data["d"]["properties"] = {
-                    "$os": "android",
-                    "$browser": "Discord VR",
-                    "$device": "Meta Quest 3",
-                }
-            await original_send(data)
-
-        self.send_as_json = send
-        try:
-            await original_identify(self)
-        finally:
-            # bỏ override trên instance, trả về method gốc của class
-            self.__dict__.pop("send_as_json", None)
-
-    DiscordWebSocket.identify = patched_identify
-    DiscordWebSocket._vr_patched = True
-    print("[PATCH] Gateway identify patched for VR Device.", flush=True)
-
-
-patch_gateway_identify()
+# Thiết bị hiển thị cạnh tên bot. "default" = không patch, để discord.py tự gửi.
+PLATFORMS = {
+    "vr":      {"$os": "android", "$browser": "Discord VR",      "$device": "Meta Quest 3"},
+    "android": {"$os": "android", "$browser": "Discord Android", "$device": "Discord Android"},
+    "ios":     {"$os": "ios",     "$browser": "Discord iOS",     "$device": "Discord iOS"},
+}
 
 
 # ----------------------------------------------------------------------
@@ -128,6 +93,50 @@ def save_cfg(updates):
         json.dump(cfg, f, indent=4, ensure_ascii=False)
     os.replace(tmp, CONFIG_FILE)
     return cfg
+
+
+# ----------------------------------------------------------------------
+# Patch Gateway identify để hiển thị đúng thiết bị đã chọn
+# Giữ nguyên payload gốc của discord.py (shard, intents, presence...) và chỉ
+# thay "properties", nên không bị lệch phiên bản discord.py.
+# Thiết bị được đọc từ config.json mỗi lần bot đăng nhập (key "platform").
+# ----------------------------------------------------------------------
+def patch_gateway_identify():
+    try:
+        from discord.gateway import DiscordWebSocket
+    except Exception as e:
+        print(f"[PATCH] Không patch được gateway: {e!r}", flush=True)
+        return
+    if getattr(DiscordWebSocket, "_vr_patched", False):
+        return
+
+    original_identify = DiscordWebSocket.identify
+
+    async def patched_identify(self):
+        props = PLATFORMS.get(load_cfg().get("platform", "vr"))  # "default" -> None
+        if props is None:
+            await original_identify(self)
+            return
+        original_send = self.send_as_json
+
+        async def send(data):
+            if isinstance(data, dict) and data.get("op") == self.IDENTIFY:
+                data["d"]["properties"] = dict(props)
+            await original_send(data)
+
+        self.send_as_json = send
+        try:
+            await original_identify(self)
+        finally:
+            # bỏ override trên instance, trả về method gốc của class
+            self.__dict__.pop("send_as_json", None)
+
+    DiscordWebSocket.identify = patched_identify
+    DiscordWebSocket._vr_patched = True
+    print("[PATCH] Gateway identify patched.", flush=True)
+
+
+patch_gateway_identify()
 
 
 def ram_mb():
@@ -252,7 +261,8 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
         self.index += 1
 
         status = STATUSES.get(cfg.get("status_mode", "online"), discord.Status.online)
-        if cfg.get("force_stream", True) or cfg.get("activity_type") == "streaming":
+        # Mặc định force_stream = False: thiếu key trong config thì KHÔNG tự nhảy sang stream
+        if cfg.get("force_stream", False) or cfg.get("activity_type") == "streaming":
             activity = discord.Streaming(name=text, url=normalize_stream_url(cfg.get("stream_url") or DEFAULT_STREAM_URL))
             if status is not discord.Status.invisible:
                 status = discord.Status.online  # chấm tím chỉ hiện khi Online
@@ -274,7 +284,7 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
     @app_commands.command(name="info", description="Xem cấu hình status hiện tại")
     async def status_info(self, interaction: discord.Interaction):
         cfg = load_cfg()
-        mode = "stream" if cfg.get("force_stream", True) else cfg.get("status_mode", "online")
+        mode = "stream" if cfg.get("force_stream", False) else cfg.get("status_mode", "online")
         msgs = cfg.get("status_messages") or []
         await interaction.response.send_message(
             "**⚙️ Cấu hình status hiện tại**\n"
@@ -317,7 +327,7 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
     @app_commands.describe(kind="Loại hoạt động")
     async def status_type(self, interaction: discord.Interaction,
                           kind: Literal["playing", "listening", "watching", "competing"]):
-        was_stream = load_cfg().get("force_stream", True)
+        was_stream = load_cfg().get("force_stream", False)
         save_cfg({"activity_type": kind, "force_stream": False})
         self.apply_now()
         extra = " (đã tắt chế độ stream vì stream ghi đè loại hoạt động)" if was_stream else ""
@@ -381,7 +391,6 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
             "`{ping}` ping • `{ram}` RAM • `{uptime}` thời gian chạy • `{latency_status}` Mượt/Ổn định/Hơi lag",
             ephemeral=True,
         )
-
 
     @app_commands.command(name="platform", description="Đổi thiết bị hiển thị của bot (VR/Android/iOS), cần restart")
     @app_commands.describe(device="vr = Discord VR, android/ios = biểu tượng điện thoại, default = bình thường")
