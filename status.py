@@ -1,11 +1,4 @@
-##############################################################
-# ╔══════════════════════════════════════════════════════╗
-# ║ Made by deleteduserf0bd3b64                          ║
-# ║ Vui lòng ghi công lại tác giả gốc nếu bạn muốn       ║
-# ║ tái tạo lại đoạn mã này.                             ║
-# ║ Link server support: https://discord.gg/eCx2NwAPwA   ║
-# ╚══════════════════════════════════════════════════════╝
-##############################################################
+
 """Module đổi status luân phiên cho bot (extension: bot.load_extension("status")).
 
 Đọc config.json (do dashboard hoặc lệnh Discord ghi): bat_status, status_messages,
