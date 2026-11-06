@@ -1,10 +1,27 @@
 {
-  "prefix": ".",
-  "bat_status": true,
-  "status_mode": "idle",
-  "status_messages": [
-    "🤖 {guilds} server | {members} members",
-    "⚡ Ping: {ping}ms | {latency_status}",
-    "💾 RAM: {ram} | bot đã hoạt động: {uptime}"
-  ]
+    "prefix": ".",
+    "accent": "#8b9bff",
+    "bat_status": true,
+    "status_mode": "idle",
+    "force_stream": false,
+    "activity_type": "playing",
+    "platform": "vr",
+    "status_delay": 5,
+    "status_messages": [
+        "🤖 {guilds} server | {members} members",
+        "⚡ Ping: {ping}ms | {latency_status}",
+        "💾 RAM: {ram} | bot đã hoạt động: {uptime}"
+    ],
+    "stream_url": "https://www.youtube.com/watch?v=9svI65nxVhc",
+    "bat_ai": true,
+    "bat_caro": true,
+    "bat_noitu": true,
+    "bat_music": true,
+    "bat_lixi": true,
+    "bat_yt_notify": true,
+    "bat_owner_mute": true,
+    "bat_bot_guard": true,
+    "site_title": "KS-BOT COMMAD",
+    "bg_url": "",
+    "bg_dim": 60
 }
