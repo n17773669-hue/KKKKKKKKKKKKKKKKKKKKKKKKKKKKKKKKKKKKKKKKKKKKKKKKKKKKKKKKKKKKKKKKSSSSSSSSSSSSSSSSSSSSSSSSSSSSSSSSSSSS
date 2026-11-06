@@ -306,10 +306,17 @@ class KiemDuyetCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        # Member mới vào: nếu đang pending thì gán role cách ly ngay
-        if member.pending and member.guild.id in KIEM_DUYET_ROLES:
-            system_channel = member.guild.system_channel or member.guild.text_channels[0]
-            await process_member_verification(member, system_channel)
+        # Member mới vào (server KHÔNG bật duyệt đơn): gán role cách ly ngay lập tức.
+        # Sau đó họ đọc nội quy, bấm nút ✅ -> process_member_verification chạy phần kiểm duyệt.
+        if member.guild.id not in KIEM_DUYET_ROLES or member.bot:
+            return
+        restricted_role = await get_or_create_restricted_role(member.guild)
+        if restricted_role and restricted_role not in member.roles:
+            try:
+                await member.add_roles(restricted_role, reason="Member mới vào: gán role cách ly kiểm duyệt")
+                print(f"🔒 [JOIN] Đã gán role cách ly cho {member.name} ({member.id}) tại {member.guild.name}")
+            except Exception as e:
+                print(f"Lỗi gán role cách ly khi join: {e}")
 
     @app_commands.command(name="setup_role_kiemduyet", description="Chọn Role được phép bấm nút duyệt/ban/kick thành viên (Admin)")
     @app_commands.default_permissions(administrator=True)
@@ -335,6 +342,77 @@ class KiemDuyetCog(commands.Cog):
             await data_channel.send(log_msg)
 
         await interaction.followup.send(f"✅ Đã bật hệ thống kiểm duyệt tự động & khởi tạo Role cách ly `{VERIFY_ROLE_NAME}` cho server!", ephemeral=True)
+
+    @app_commands.command(name="setup_cachly", description="Tự chỉnh quyền: role Chờ Kiểm Duyệt chỉ thấy kênh nội quy (Admin)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(
+        kenh_noi_quy="Kênh đăng nội quy (nơi có nút ✅ và tạo thread kiểm duyệt)",
+        kenh_voice="(Tùy chọn) Voice kiểm duyệt cho tài khoản dưới 5 tháng"
+    )
+    async def setup_cachly(
+        self,
+        interaction: discord.Interaction,
+        kenh_noi_quy: discord.TextChannel,
+        kenh_voice: discord.VoiceChannel = None
+    ):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+
+        role = await get_or_create_restricted_role(guild)
+        if not role:
+            await interaction.followup.send(
+                f"❌ Không tạo/tìm được role `{VERIFY_ROLE_NAME}`. Kiểm tra bot có quyền **Manage Roles** chưa.",
+                ephemeral=True
+            )
+            return
+
+        # Quyền cho kênh nội quy: xem + đọc lịch sử, không chat, vẫn chat được trong thread kiểm duyệt
+        rule_overwrite = discord.PermissionOverwrite(
+            view_channel=True,
+            read_message_history=True,
+            send_messages=False,
+            add_reactions=False,
+            send_messages_in_threads=True,
+            attach_files=True,
+            embed_links=True,
+        )
+        # Quyền cho voice kiểm duyệt: vào, nói, bật cam
+        voice_overwrite = discord.PermissionOverwrite(
+            view_channel=True, connect=True, speak=True, stream=True, use_voice_activation=True
+        )
+        # Mọi kênh còn lại: ẩn hoàn toàn
+        hidden_overwrite = discord.PermissionOverwrite(view_channel=False)
+
+        done, failed = 0, []
+        for ch in guild.channels:
+            if ch.id == kenh_noi_quy.id:
+                ow = rule_overwrite
+            elif kenh_voice and ch.id == kenh_voice.id:
+                ow = voice_overwrite
+            else:
+                ow = hidden_overwrite
+            try:
+                await ch.set_permissions(role, overwrite=ow, reason="Setup cách ly kiểm duyệt")
+                done += 1
+            except Exception as e:
+                failed.append(ch.name)
+                print(f"Lỗi chỉnh quyền kênh {ch.name}: {e}")
+            await asyncio.sleep(0.4)  # tránh bị Discord giới hạn tốc độ
+
+        msg = (
+            f"✅ Đã chỉnh quyền cho role `{VERIFY_ROLE_NAME}` ở **{done}** kênh.\n"
+            f"• Chỉ thấy: {kenh_noi_quy.mention}"
+            + (f" và {kenh_voice.mention}" if kenh_voice else "")
+            + "\n• Mọi kênh khác đã bị ẩn với role này."
+        )
+        if failed:
+            msg += (
+                f"\n⚠️ Không chỉnh được {len(failed)} kênh: {', '.join(failed[:15])}"
+                + (" ..." if len(failed) > 15 else "")
+                + "\nHãy kiểm tra bot có quyền **Manage Channels** / **Manage Roles** và role của bot nằm **trên** role "
+                + f"`{VERIFY_ROLE_NAME}`."
+            )
+        await interaction.followup.send(msg, ephemeral=True)
 
     @app_commands.command(name="setup_rule", description="Thiết lập hệ thống kiểm duyệt thủ công (Admin)")
     @app_commands.default_permissions(administrator=True)
