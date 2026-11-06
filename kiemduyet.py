@@ -9,7 +9,7 @@ import asyncio
 WAIT_SECONDS = 30  
 DATA_CHANNEL_ID = 1566780713058046094  # Kênh lưu trữ log cố định
 
-# Lưu trữ tạm thời Role ID kiểm duyệt theo từng Server (Server ID -> Role ID)
+# Dữ liệu Role kiểm duyệt lưu trong bộ nhớ (Server ID -> Role ID)
 KIEM_DUYET_ROLES = {}
 
 # 1. Bảng nút bấm quyết định cho Mod/Admin (Chỉ xuất hiện khi gõ .check / /check hoặc sau 10 phút)
@@ -120,6 +120,11 @@ class RuleVerifyView(ui.View):
 # Hàm xử lý chung tạo phòng kiểm duyệt riêng cho thành viên
 async def process_member_verification(user: discord.Member, channel: discord.abc.GuildChannel, interaction: discord.Interaction = None):
     guild = user.guild
+    
+    # CHỈ XỬ LÝ NẾU SERVER ĐÃ SETUP ROLE KIỂM DUYỆT
+    if guild.id not in KIEM_DUYET_ROLES:
+        return
+
     now = datetime.now(timezone.utc)
     account_age_days = (now - user.created_at).days
     account_age_months = account_age_days / 30.0
@@ -169,7 +174,6 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
         )
         await thread.add_user(user)
 
-        # TIN NHẮN ĐẦU TIÊN SẠCH SẼ: KHÔNG CÓ NÚT BẤM
         embed_thread_msg = discord.Embed(
             title="🛡️ PHÒNG KIỂM DUYỆT TÀI KHOẢN",
             description=(
@@ -184,7 +188,6 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
         )
         await thread.send(content=f"{user.mention} Vui lòng gửi ảnh chụp màn hình vào đây!", embed=embed_thread_msg)
 
-        # Task đếm ngược 10 phút tự động gọi Mod
         async def auto_ping_mod():
             await asyncio.sleep(600)
             try:
@@ -213,31 +216,54 @@ class KiemDuyetCog(commands.Cog):
     async def cog_load(self):
         self.bot.add_view(RuleVerifyView())
 
-    # --- TỰ ĐỘNG QUÉT ĐƠN ĐĂNG KÝ "ĐANG CHỜ XỬ LÝ" NGAY KHI KHỞI ĐỘNG BOT ---
+    # --- ĐỒNG BỘ & QUÉT KHÔI PHỤC DỮ LIỆU TỪ KÊNH LOG KHI BOT MỞ LÊN ---
     @commands.Cog.listener()
     async def on_ready(self):
-        print("🔍 [BOT STARTUP] Đang quét danh sách đơn đăng ký chờ xử lý ở các server...")
-        for guild in self.bot.guilds:
+        print("🔍 [BOT STARTUP] Đang khôi phục dữ liệu từ kênh chat quản lý...")
+        
+        # 1. Quét lịch sử kênh DATA_CHANNEL_ID để lấy danh sách Server ID + Role ID đã setup trước đây
+        data_channel = self.bot.get_channel(DATA_CHANNEL_ID)
+        if data_channel:
             try:
-                target_channel = guild.system_channel or guild.text_channels[0]
-                # Duyệt danh sách tất cả thành viên trong server
-                async for member in guild.fetch_members(limit=None):
-                    # Nếu thành viên đang ở trạng thái Pending (Đang chờ xử lý đơn đăng ký)
-                    if member.pending:
-                        print(f"📌 Phát hiện đơn đăng ký chưa duyệt của: {member.name} ({member.id}) tại {guild.name}")
-                        await process_member_verification(member, target_channel)
+                async for msg in data_channel.history(limit=200):
+                    if "⚙️ **[SETUP ROLE KIỂM DUYỆT]**" in msg.content:
+                        lines = msg.content.split("\n")
+                        guild_id = None
+                        role_id = None
+                        for line in lines:
+                            if "• **Server:**" in line and "`" in line:
+                                guild_id = int(line.split("`")[1])
+                            if "• **Role được chọn:**" in line and "`" in line:
+                                role_id = int(line.split("`")[1])
+                        if guild_id and role_id:
+                            KIEM_DUYET_ROLES[guild_id] = role_id
+                print(f"✅ [DATA SYNC] Đã khôi phục cài đặt Role cho {len(KIEM_DUYET_ROLES)} server từ kênh log!")
             except Exception as e:
-                print(f"Không thể quét danh sách đơn tại server {guild.name}: {e}")
+                print(f"Lỗi khi cào dữ liệu từ kênh data: {e}")
 
-    # Lắng nghe khi có người hoàn tất bước gửi đơn đăng ký mới
+        # 2. CHỈ QUÉT ĐƠN CHỜ DÀNH CHO CÁC SERVER ĐÃ DÙNG LỆNH /setup_role_kiemduyet
+        for guild_id, role_id in KIEM_DUYET_ROLES.items():
+            guild = self.bot.get_guild(guild_id)
+            if guild:
+                try:
+                    target_channel = guild.system_channel or guild.text_channels[0]
+                    async for member in guild.fetch_members(limit=None):
+                        if member.pending:
+                            print(f"📌 [Duyệt đơn hợp lệ] của: {member.name} ({member.id}) tại {guild.name}")
+                            await process_member_verification(member, target_channel)
+                except Exception as e:
+                    print(f"Lỗi khi duyệt đơn tại {guild.name}: {e}")
+
+    # Lắng nghe khi thành viên gửi đơn đăng ký mới (chỉ xử lý server đã setup role)
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         if before.pending and not after.pending:
-            system_channel = after.guild.system_channel or after.guild.text_channels[0]
-            if system_channel:
-                await process_member_verification(after, system_channel)
+            if after.guild.id in KIEM_DUYET_ROLES:
+                system_channel = after.guild.system_channel or after.guild.text_channels[0]
+                if system_channel:
+                    await process_member_verification(after, system_channel)
 
-    # Lệnh cài đặt Role có quyền kiểm duyệt
+    # Lệnh cài đặt Role kiểm duyệt (BẮT BUỘC ĐỂ BOT KÍCH HOẠT DUYỆT Ở SERVER NÀY)
     @app_commands.command(name="setup_role_kiemduyet", description="Chọn Role được phép bấm nút duyệt/ban/kick thành viên (Admin)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(role="Role của Ban kiểm duyệt / Moderator")
@@ -246,8 +272,9 @@ class KiemDuyetCog(commands.Cog):
         
         guild = interaction.guild
         KIEM_DUYET_ROLES[guild.id] = role.id
-        data_channel = guild.get_channel(DATA_CHANNEL_ID)
+        data_channel = self.bot.get_channel(DATA_CHANNEL_ID)
 
+        # Lưu tin nhắn log chuẩn cấu trúc để bot có thể cào lại sau khi restart
         if data_channel:
             log_msg = (
                 f"⚙️ **[SETUP ROLE KIỂM DUYỆT]**\n"
@@ -258,7 +285,7 @@ class KiemDuyetCog(commands.Cog):
             )
             await data_channel.send(log_msg)
 
-        await interaction.followup.send(f"✅ Đã gán Role kiểm duyệt thành công cho: {role.mention}!", ephemeral=True)
+        await interaction.followup.send(f"✅ Đã bật hệ thống kiểm duyệt và gán Role thành công cho: {role.mention}!", ephemeral=True)
 
     # Lệnh /setup_rule
     @app_commands.command(name="setup_rule", description="Thiết lập hệ thống kiểm duyệt thủ công (Admin)")
@@ -272,7 +299,7 @@ class KiemDuyetCog(commands.Cog):
 
         guild = interaction.guild
         channel = interaction.channel
-        data_channel = guild.get_channel(DATA_CHANNEL_ID)
+        data_channel = self.bot.get_channel(DATA_CHANNEL_ID)
 
         file = discord.File(self.rule_image_path, filename="ruleks.png")
         await channel.send(file=file, view=RuleVerifyView())
@@ -299,7 +326,7 @@ class KiemDuyetCog(commands.Cog):
             return
 
         guild = interaction.guild
-        data_channel = guild.get_channel(DATA_CHANNEL_ID)
+        data_channel = self.bot.get_channel(DATA_CHANNEL_ID)
         role_id = KIEM_DUYET_ROLES.get(guild.id)
         ping_content = f"<@&{role_id}>" if role_id else "@here"
 
@@ -331,7 +358,7 @@ class KiemDuyetCog(commands.Cog):
             return
         
         guild = ctx.guild
-        data_channel = guild.get_channel(DATA_CHANNEL_ID)
+        data_channel = self.bot.get_channel(DATA_CHANNEL_ID)
         role_id = KIEM_DUYET_ROLES.get(guild.id)
         ping_content = f"<@&{role_id}>" if role_id else "@here"
 
