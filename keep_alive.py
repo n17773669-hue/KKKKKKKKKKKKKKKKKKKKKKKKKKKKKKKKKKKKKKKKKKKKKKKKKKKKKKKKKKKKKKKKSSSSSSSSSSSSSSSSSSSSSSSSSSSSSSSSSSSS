@@ -364,6 +364,9 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--accen
 /* Chọn trạng thái */
 .modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 @media (max-width: 520px) { .modes { grid-template-columns: 1fr 1fr; } }
+.modes.platforms { grid-template-columns: repeat(4, 1fr); }
+.modes.platforms .mode span { flex-direction: column; text-align: center; gap: 6px; padding: 12px 8px; }
+@media (max-width: 720px) { .modes.platforms { grid-template-columns: 1fr 1fr; } }
 .mode input { position: absolute; opacity: 0; pointer-events: none; }
 .mode span {
     display: flex; align-items: center; gap: 10px; padding: 12px 14px;
@@ -1188,9 +1191,12 @@ PAGE_JS = """
             body: body.toString()
         }).then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        }).then(function (d) {
             snapshot = body.toString();
             refresh();
-            notify('Đã lưu cấu hình');
+            notify(d && d.restarted ? 'Đã lưu, bot đang khởi động lại để đổi thiết bị...' : 'Đã lưu cấu hình');
+            if (d && d.restarted) setTimeout(pollBotState, 1500);
         }).catch(function (err) {
             notify('Lưu thất bại: ' + err.message, true);
         }).then(function () {
@@ -1320,10 +1326,10 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
             <section class="card" data-show="config">
                 <h2>Trạng thái bot</h2>
-                <p class="sub">Màu chấm, tốc độ xoay và nội dung các dòng status.</p>
+                <p class="sub">Màu chấm, thiết bị, tốc độ xoay và nội dung các dòng status.</p>
 
                 <div class="field">
-                    <span class="label">Màu chấm &amp; thiết bị hiển thị</span>
+                    <span class="label">Màu chấm trạng thái</span>
                     <div class="modes">
                         <label class="mode"><input type="radio" name="status_mode" value="online" __M_ONLINE__>
                             <span><i class="dot" style="background:#3fc380"></i><div>Online<small>Chấm xanh</small></div></span></label>
@@ -1335,9 +1341,14 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                             <span><i class="dot" style="background:#5c6370"></i><div>Invisible<small>Ẩn, nhìn như offline</small></div></span></label>
                         <label class="mode"><input type="radio" name="status_mode" value="stream" __M_STREAM__>
                             <span><i class="dot" style="background:#9b59ff"></i><div>Stream<small>Chấm tím + nút Xem</small></div></span></label>
-                        __PLATFORMS__
                     </div>
-                    <p class="hint">Hàng này gồm màu chấm (Online, Idle, DND, Invisible, Stream) và thiết bị (VR, Android, iOS, Mặc định), chọn mỗi nhóm một nút. Đổi thiết bị phải bấm <b>Khởi động lại</b> ở tab Tổng quan thì Discord mới nhận. Đổi màu chấm thì không cần.</p>
+                    <p class="hint">Đổi màu chấm có hiệu lực ngay, không cần khởi động lại.</p>
+                </div>
+
+                <div class="field">
+                    <span class="label">Thiết bị hiển thị cạnh tên bot</span>
+                    <div class="modes platforms">__PLATFORMS__</div>
+                    <p class="hint">Đổi thiết bị thì bot tự khởi động lại khi bạn bấm <b>Lưu thay đổi</b> (offline vài giây). Không cần bấm Khởi động lại thủ công.</p>
                 </div>
 
                 <div class="field">
@@ -1763,11 +1774,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         # Gộp với config cũ để không làm mất các key do bot/lệnh Discord ghi
         merged = read_config()
+        old_platform = merged.get("platform", "ios")
         merged.update(new_config)
         write_config(merged)
 
+        # Thiết bị nằm trong gói IDENTIFY lúc đăng nhập gateway nên phải đăng nhập lại.
+        # Chỉ restart khi platform đổi thật VÀ bot đang chạy (nếu bạn đã bấm Tắt bot
+        # thì không tự bật lại).
+        restarted = False
+        if platform != old_platform and bot_status()["running"]:
+            restart_bot()
+            restarted = True
+
         if self.headers.get("X-Requested-With") == "fetch":
-            out = b'{"ok": true}'
+            out = json.dumps({"ok": True, "restarted": restarted}).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.send_header("Content-Length", str(len(out)))
