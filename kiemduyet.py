@@ -41,7 +41,8 @@ class RuleVerifyView(ui.View):
         await interaction.response.send_message(embed=embed_success, ephemeral=True)
 
 
-class NoiTuCog(commands.Cog):
+# Đổi tên từ NoiTuCog -> KiemDuyetCog để không trùng tên với cog trong noitu.py
+class KiemDuyetCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.rule_image_path = "ruleks.png"  # Tên file ảnh nội quy trong thư mục dự án
@@ -76,15 +77,14 @@ class NoiTuCog(commands.Cog):
         await interaction.followup.send("✅ Đã gửi bảng nội quy thành công!", ephemeral=True)
 
     @app_commands.command(name="test_rule", description="Test thử giao diện và bộ đếm 30 giây xác nhận luật")
-    async def test_rule(interaction: discord.Interaction):
+    async def test_rule(self, interaction: discord.Interaction):  # <-- đã thêm self
         await interaction.response.defer(ephemeral=True)
 
-        rule_image_path = "ruleks.png"
-        if not os.path.exists(rule_image_path):
-            await interaction.followup.send(f"❌ Không tìm thấy file ảnh `{rule_image_path}` trong thư mục bot!", ephemeral=True)
+        if not os.path.exists(self.rule_image_path):
+            await interaction.followup.send(f"❌ Không tìm thấy file ảnh `{self.rule_image_path}` trong thư mục bot!", ephemeral=True)
             return
 
-        file = discord.File(rule_image_path, filename="ruleks.png")
+        file = discord.File(self.rule_image_path, filename="ruleks.png")
         
         embed = discord.Embed(
             title="🧪 [TESTMODE] BẢNG NỘI QUY THỬ NHIỆM",
@@ -100,4 +100,4 @@ class NoiTuCog(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(NoiTuCog(bot))
+    await bot.add_cog(KiemDuyetCog(bot))
