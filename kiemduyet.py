@@ -12,14 +12,13 @@ DATA_CHANNEL_ID = 1566780713058046094  # Kênh lưu trữ log cố định
 # Lưu trữ tạm thời Role ID kiểm duyệt theo từng Server (Server ID -> Role ID)
 KIEM_DUYET_ROLES = {}
 
-# 1. Bảng nút bấm quyết định (Chỉ xuất hiện khi gọi .check / /check hoặc sau 10 phút)
+# 1. Bảng nút bấm quyết định cho Mod/Admin (Chỉ xuất hiện khi gõ .check / /check hoặc sau 10 phút)
 class AdminDecisionView(ui.View):
     def __init__(self, member: discord.Member, reviewer_role_id: int = None):
         super().__init__(timeout=None)
         self.member = member
         self.reviewer_role_id = reviewer_role_id
 
-    # Hàm kiểm tra xem người bấm nút có quyền hay không (Có Role kiểm duyệt hoặc là Admin)
     def check_permission(self, interaction: discord.Interaction) -> bool:
         user = interaction.user
         if user.guild_permissions.administrator:
@@ -103,7 +102,7 @@ class AdminDecisionView(ui.View):
             await interaction.channel.edit(archived=True, locked=True)
 
 
-# 2. View nút bấm nội quy truyền thống
+# 2. View nút xác thực luật thủ công (nếu dùng lệnh /setup_rule)
 class RuleVerifyView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -118,7 +117,7 @@ class RuleVerifyView(ui.View):
         await process_member_verification(interaction.user, interaction.channel, interaction)
 
 
-# Hàm chung xử lý tạo phòng kiểm duyệt tự động
+# Hàm xử lý chung tạo phòng kiểm duyệt riêng cho thành viên
 async def process_member_verification(user: discord.Member, channel: discord.abc.GuildChannel, interaction: discord.Interaction = None):
     guild = user.guild
     now = datetime.now(timezone.utc)
@@ -137,7 +136,7 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
 
     if data_channel:
         log_detail = (
-            f"📋 **[LOG ĐĂNG KÝ / HOÀN TẤT LUẬT]**\n"
+            f"📋 **[LOG ĐĂNG KÝ / ĐANG CHỜ XỬ LÝ]**\n"
             f"• **Thành viên:** {user} (`{user.id}`)\n"
             f"• **Server:** {guild.name} (`{guild.id}`)\n"
             f"• **Tuổi tài khoản:** {int(account_age_months)} tháng\n"
@@ -145,6 +144,7 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
         )
         await data_channel.send(log_detail)
 
+    # Phân luồng <= 5 tháng (Check Voice)
     if account_age_months <= 5:
         embed_voice = discord.Embed(
             title="🎙️ YÊU CẦU KIỂM DUYỆT QUA VOICE",
@@ -169,7 +169,7 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
         )
         await thread.add_user(user)
 
-        # TIN NHẮN ĐẦU TIÊN: KHÔNG CÓ NÚT BẤM (Giao diện sạch sẽ)
+        # TIN NHẮN ĐẦU TIÊN SẠCH SẼ: KHÔNG CÓ NÚT BẤM
         embed_thread_msg = discord.Embed(
             title="🛡️ PHÒNG KIỂM DUYỆT TÀI KHOẢN",
             description=(
@@ -182,11 +182,9 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
             ),
             color=discord.Color.blue()
         )
-        
-        # Gửi tin nhắn hướng dẫn (Không có View nút bấm)
         await thread.send(content=f"{user.mention} Vui lòng gửi ảnh chụp màn hình vào đây!", embed=embed_thread_msg)
 
-        # Task nền đếm ngược 10 phút tự động gọi Mod
+        # Task đếm ngược 10 phút tự động gọi Mod
         async def auto_ping_mod():
             await asyncio.sleep(600)
             try:
@@ -215,7 +213,23 @@ class KiemDuyetCog(commands.Cog):
     async def cog_load(self):
         self.bot.add_view(RuleVerifyView())
 
-    # Lắng nghe sự kiện đăng ký thành viên
+    # --- TỰ ĐỘNG QUÉT ĐƠN ĐĂNG KÝ "ĐANG CHỜ XỬ LÝ" NGAY KHI KHỞI ĐỘNG BOT ---
+    @commands.Cog.listener()
+    async def on_ready(self):
+        print("🔍 [BOT STARTUP] Đang quét danh sách đơn đăng ký chờ xử lý ở các server...")
+        for guild in self.bot.guilds:
+            try:
+                target_channel = guild.system_channel or guild.text_channels[0]
+                # Duyệt danh sách tất cả thành viên trong server
+                async for member in guild.fetch_members(limit=None):
+                    # Nếu thành viên đang ở trạng thái Pending (Đang chờ xử lý đơn đăng ký)
+                    if member.pending:
+                        print(f"📌 Phát hiện đơn đăng ký chưa duyệt của: {member.name} ({member.id}) tại {guild.name}")
+                        await process_member_verification(member, target_channel)
+            except Exception as e:
+                print(f"Không thể quét danh sách đơn tại server {guild.name}: {e}")
+
+    # Lắng nghe khi có người hoàn tất bước gửi đơn đăng ký mới
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         if before.pending and not after.pending:
@@ -223,7 +237,7 @@ class KiemDuyetCog(commands.Cog):
             if system_channel:
                 await process_member_verification(after, system_channel)
 
-    # 1. Lệnh /setup_role_kiemduyet: Chọn Role có quyền kiểm duyệt
+    # Lệnh cài đặt Role có quyền kiểm duyệt
     @app_commands.command(name="setup_role_kiemduyet", description="Chọn Role được phép bấm nút duyệt/ban/kick thành viên (Admin)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(role="Role của Ban kiểm duyệt / Moderator")
@@ -244,9 +258,10 @@ class KiemDuyetCog(commands.Cog):
             )
             await data_channel.send(log_msg)
 
-        await interaction.followup.send(f"✅ Đã gán Role kiểm duyệt thành công cho: {role.mention}!\nChỉ những người có Role này mới có quyền bấm nút duyệt.", ephemeral=True)
+        await interaction.followup.send(f"✅ Đã gán Role kiểm duyệt thành công cho: {role.mention}!", ephemeral=True)
 
-    @app_commands.command(name="setup_rule", description="Thiết lập hệ thống kiểm duyệt (Admin)")
+    # Lệnh /setup_rule
+    @app_commands.command(name="setup_rule", description="Thiết lập hệ thống kiểm duyệt thủ công (Admin)")
     @app_commands.default_permissions(administrator=True)
     async def setup_rule(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -274,7 +289,7 @@ class KiemDuyetCog(commands.Cog):
 
         await interaction.followup.send(f"✅ Đã thiết lập thành công! Log lưu về kênh ID: `{DATA_CHANNEL_ID}`", ephemeral=True)
 
-    # 2. Lệnh /check: Ping Role kiểm duyệt + Hiển thị bảng nút bấm
+    # Lệnh /check
     @app_commands.command(name="check", description="Gọi ban kiểm duyệt vào thread hiện tại để duyệt tài khoản")
     async def check_command(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -308,7 +323,7 @@ class KiemDuyetCog(commands.Cog):
 
         await interaction.followup.send("✅ Đã gửi tín hiệu gọi ban kiểm duyệt thành công!", ephemeral=True)
 
-    # 3. Lệnh text .check
+    # Lệnh text .check
     @commands.command(name="check")
     async def check_text_command(self, ctx):
         if not isinstance(ctx.channel, discord.Thread):
