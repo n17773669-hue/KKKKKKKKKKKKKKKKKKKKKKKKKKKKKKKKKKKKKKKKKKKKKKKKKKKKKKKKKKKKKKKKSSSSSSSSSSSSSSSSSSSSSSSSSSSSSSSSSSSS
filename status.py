@@ -283,7 +283,8 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
             f"• Loại hoạt động: `{cfg.get('activity_type', 'playing')}`\n"
             f"• Đổi câu mỗi: `{cfg.get('status_delay', 5)}` giây\n"
             f"• Link stream: {cfg.get('stream_url') or DEFAULT_STREAM_URL}\n"
-            f"• Số câu status: `{len(msgs)}`",
+            f"• Số câu status: `{len(msgs)}`\n"
+            f"• Thiết bị: `{cfg.get('platform', 'vr')}`",
             ephemeral=True,
         )
 
@@ -380,6 +381,23 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
             "`{ping}` ping • `{ram}` RAM • `{uptime}` thời gian chạy • `{latency_status}` Mượt/Ổn định/Hơi lag",
             ephemeral=True,
         )
+
+
+    @app_commands.command(name="platform", description="Đổi thiết bị hiển thị của bot (VR/Android/iOS), cần restart")
+    @app_commands.describe(device="vr = Discord VR, android/ios = biểu tượng điện thoại, default = bình thường")
+    async def status_platform(self, interaction: discord.Interaction,
+                              device: Literal["vr", "android", "ios", "default"]):
+        save_cfg({"platform": device})
+        await interaction.response.send_message(
+            f"✅ Đã lưu thiết bị: `{device}`. Gõ `/status restart` để áp dụng "
+            "(Discord chỉ nhận lúc bot đăng nhập lại).", ephemeral=True)
+
+    @app_commands.command(name="restart", description="Khởi động lại bot để áp dụng thiết bị mới")
+    async def status_restart(self, interaction: discord.Interaction):
+        await interaction.response.send_message(
+            "🔄 Đang khởi động lại, bot sẽ online lại sau vài giây. "
+            "Đừng restart liên tục kẻo Discord chặn IP.", ephemeral=True)
+        await self.bot.close()
 
 
 async def setup(bot):
