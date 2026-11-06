@@ -7,12 +7,11 @@ from datetime import datetime, timezone
 import asyncio
 
 WAIT_SECONDS = 30  
-DATA_CHANNEL_ID = 1566780713058046094  # Kênh lưu trữ log cố định
+DATA_CHANNEL_ID = 1566780713058046094  # Kênh log cố định
 
-# Dữ liệu Role kiểm duyệt lưu trong bộ nhớ (Server ID -> Role ID)
 KIEM_DUYET_ROLES = {}
+VERIFY_ROLE_NAME = "Chờ Kiểm Duyệt" # Role tự động cách ly
 
-# 1. Bảng nút bấm quyết định cho Mod/Admin (Chỉ xuất hiện khi gõ .check / /check hoặc sau 10 phút)
 class AdminDecisionView(ui.View):
     def __init__(self, member: discord.Member, reviewer_role_id: int = None):
         super().__init__(timeout=None)
@@ -37,6 +36,15 @@ class AdminDecisionView(ui.View):
             await interaction.response.send_message("❌ Bạn không có Role Kiểm Duyệt để thực hiện thao tác này!", ephemeral=True)
             return
 
+        # Gỡ Role Chờ Kiểm Duyệt cách ly ra khỏi user
+        guild = interaction.guild
+        restricted_role = discord.utils.get(guild.roles, name=VERIFY_ROLE_NAME)
+        if restricted_role and restricted_role in self.member.roles:
+            try:
+                await self.member.remove_roles(restricted_role)
+            except Exception as e:
+                print(f"Lỗi gỡ role cách ly: {e}")
+
         embed = discord.Embed(
             title="🎉 KIỂM DUYỆT THÀNH CÔNG",
             description=f"Thành viên {self.member.mention} đã vượt qua vòng kiểm duyệt bởi {interaction.user.mention}!",
@@ -54,19 +62,19 @@ class AdminDecisionView(ui.View):
     @ui.button(label="Ban", style=discord.ButtonStyle.red, emoji="🔨", custom_id="decision_ban")
     async def ban_btn(self, interaction: discord.Interaction, button: ui.Button):
         if not self.check_permission(interaction):
-            await interaction.response.send_message("❌ Bạn không có Role Kiểm Duyệt để thực hiện thao tác này!", ephemeral=True)
+            await interaction.response.send_message("❌ Bạn không có Role Kiểm Duyệt!", ephemeral=True)
             return
 
         try:
             await self.member.ban(reason=f"Bị ban qua hệ thống kiểm duyệt bởi {interaction.user}")
             embed = discord.Embed(
                 title="🔨 ĐÃ BAN THÀNH VIÊN",
-                description=f"Thành viên {self.member.mention} đã bị BAN khỏi server bởi {interaction.user.mention}.",
+                description=f"Thành viên {self.member.mention} đã bị BAN bởi {interaction.user.mention}.",
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed)
         except Exception as e:
-            await interaction.response.send_message(f"❌ Không thể ban thành viên này: {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ Không thể ban: {e}", ephemeral=True)
             return
 
         for child in self.children:
@@ -79,19 +87,19 @@ class AdminDecisionView(ui.View):
     @ui.button(label="Kick", style=discord.ButtonStyle.blurple, emoji="👢", custom_id="decision_kick")
     async def kick_btn(self, interaction: discord.Interaction, button: ui.Button):
         if not self.check_permission(interaction):
-            await interaction.response.send_message("❌ Bạn không có Role Kiểm Duyệt để thực hiện thao tác này!", ephemeral=True)
+            await interaction.response.send_message("❌ Bạn không có Role Kiểm Duyệt!", ephemeral=True)
             return
 
         try:
             await self.member.kick(reason=f"Bị kick qua hệ thống kiểm duyệt bởi {interaction.user}")
             embed = discord.Embed(
                 title="👢 ĐÃ KICK THÀNH VIÊN",
-                description=f"Thành viên {self.member.mention} đã bị KICK khỏi server bởi {interaction.user.mention}.",
+                description=f"Thành viên {self.member.mention} đã bị KICK bởi {interaction.user.mention}.",
                 color=discord.Color.orange()
             )
             await interaction.response.send_message(embed=embed)
         except Exception as e:
-            await interaction.response.send_message(f"❌ Không thể kick thành viên này: {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ Không thể kick: {e}", ephemeral=True)
             return
 
         for child in self.children:
@@ -102,7 +110,6 @@ class AdminDecisionView(ui.View):
             await interaction.channel.edit(archived=True, locked=True)
 
 
-# 2. View nút xác thực luật thủ công (nếu dùng lệnh /setup_rule)
 class RuleVerifyView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -117,13 +124,44 @@ class RuleVerifyView(ui.View):
         await process_member_verification(interaction.user, interaction.channel, interaction)
 
 
-# Hàm xử lý chung tạo phòng kiểm duyệt riêng cho thành viên
+# Hàm tự động tạo và cấu hình Role cách ly nếu chưa có
+async def get_or_create_restricted_role(guild: discord.Guild) -> discord.Role:
+    role = discord.utils.get(guild.roles, name=VERIFY_ROLE_NAME)
+    if not role:
+        try:
+            role = await guild.create_role(
+                name=VERIFY_ROLE_NAME,
+                color=discord.Color.dark_gray(),
+                reason="Role tự động cách ly kiểm duyệt"
+            )
+            print(f"⚙️ [AUTO ROLE] Đã tự động khởi tạo Role: '{VERIFY_ROLE_NAME}' cho {guild.name}")
+        except Exception as e:
+            print(f"Lỗi tạo role tự động: {e}")
+    return role
+
+
+# Hàm xử lý chung tự động Duyệt đơn + Nhét Role + Phân luồng kiểm duyệt
 async def process_member_verification(user: discord.Member, channel: discord.abc.GuildChannel, interaction: discord.Interaction = None):
     guild = user.guild
     
-    # CHỈ XỬ LÝ NẾU SERVER ĐÃ SETUP ROLE KIỂM DUYỆT
     if guild.id not in KIEM_DUYET_ROLES:
         return
+
+    # 1. TỰ ĐỘNG CHẤP THUẬN ĐƠN DÀNH CHO CÁC MEMBER ĐANG PENDING
+    if user.pending:
+        try:
+            await user.edit(pending=False, reason="Bot tự động duyệt đơn để đưa vào kiểm duyệt")
+            print(f"✅ [AUTO APPROVE] Đã tự động chấp thuận đơn đăng ký của {user.name}")
+        except Exception as e:
+            print(f"Lỗi tự động duyệt đơn: {e}")
+
+    # 2. TỰ ĐỘNG GÁN ROLE CÁCH LY
+    restricted_role = await get_or_create_restricted_role(guild)
+    if restricted_role and restricted_role not in user.roles:
+        try:
+            await user.add_roles(restricted_role, reason="Gán role cách ly kiểm duyệt")
+        except Exception as e:
+            print(f"Lỗi gán role cách ly: {e}")
 
     now = datetime.now(timezone.utc)
     account_age_days = (now - user.created_at).days
@@ -134,14 +172,14 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
     if interaction and not interaction.response.is_done():
         embed_completed = discord.Embed(
             title="✅ HOÀN THÀNH XÁC NHẬN",
-            description=f"Cảm ơn {user.mention} đã hoàn tất quy trình! Hệ thống đang tạo phòng kiểm duyệt riêng...",
+            description=f"Cảm ơn {user.mention} đã hoàn tất! Bạn đã được đưa vào hệ thống kiểm duyệt.",
             color=discord.Color.green()
         )
         await interaction.response.send_message(embed_completed, ephemeral=True)
 
     if data_channel:
         log_detail = (
-            f"📋 **[LOG ĐĂNG KÝ / ĐANG CHỜ XỬ LÝ]**\n"
+            f"📋 **[LOG ĐÃ CHẤP THUẬN ĐƠN & GÁN ROLE CÁCH LY]**\n"
             f"• **Thành viên:** {user} (`{user.id}`)\n"
             f"• **Server:** {guild.name} (`{guild.id}`)\n"
             f"• **Tuổi tài khoản:** {int(account_age_months)} tháng\n"
@@ -160,7 +198,7 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
             color=discord.Color.gold()
         )
         if data_channel:
-            await data_channel.send(content=f"🔔 **[CẦN VOICE CHECK]** Thành viên {user.mention} tại Server `{guild.name}`.")
+            await data_channel.send(content=f"🔔 **[CẦN VOICE CHECK]** Thành viên {user.mention} tại `{guild.name}`.")
         return
 
     # Tạo Thread riêng (TÀI KHOẢN >= 7 THÁNG)
@@ -182,7 +220,7 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
                 "📸 **Yêu cầu:** Vui lòng **gửi ảnh chụp màn hình danh sách server** bạn đang tham gia vào đây.\n\n"
                 "👉 **HƯỚNG DẪN:**\n"
                 "• Nếu đã chụp đủ, hãy gõ lệnh **`.check`** hoặc **`/check`** để gọi Mod vào kiểm tra.\n"
-                "• Hoặc chờ **10 phút**, hệ thống sẽ tự động gọi Ban kiểm duyệt và hiển thị bảng nút lựa chọn."
+                "• Hoặc chờ **10 phút**, hệ thống sẽ tự động gọi Ban kiểm duyệt."
             ),
             color=discord.Color.blue()
         )
@@ -205,7 +243,7 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
         asyncio.create_task(auto_ping_mod())
 
     except Exception as e:
-        print(f"Lỗi tạo phòng kiểm duyệt tự động: {e}")
+        print(f"Lỗi tạo thread: {e}")
 
 
 class KiemDuyetCog(commands.Cog):
@@ -216,12 +254,10 @@ class KiemDuyetCog(commands.Cog):
     async def cog_load(self):
         self.bot.add_view(RuleVerifyView())
 
-    # --- ĐỒNG BỘ & QUÉT KHÔI PHỤC DỮ LIỆU TỪ KÊNH LOG KHI BOT MỞ LÊN ---
     @commands.Cog.listener()
     async def on_ready(self):
-        print("🔍 [BOT STARTUP] Đang khôi phục dữ liệu từ kênh chat quản lý...")
+        print("🔍 [BOT STARTUP] Khôi phục cài đặt và duyệt đơn tự động...")
         
-        # 1. Quét lịch sử kênh DATA_CHANNEL_ID để lấy danh sách Server ID + Role ID đã setup trước đây
         data_channel = self.bot.get_channel(DATA_CHANNEL_ID)
         if data_channel:
             try:
@@ -237,24 +273,22 @@ class KiemDuyetCog(commands.Cog):
                                 role_id = int(line.split("`")[1])
                         if guild_id and role_id:
                             KIEM_DUYET_ROLES[guild_id] = role_id
-                print(f"✅ [DATA SYNC] Đã khôi phục cài đặt Role cho {len(KIEM_DUYET_ROLES)} server từ kênh log!")
             except Exception as e:
-                print(f"Lỗi khi cào dữ liệu từ kênh data: {e}")
+                print(f"Lỗi cào dữ liệu: {e}")
 
-        # 2. CHỈ QUÉT ĐƠN CHỜ DÀNH CHO CÁC SERVER ĐÃ DÙNG LỆNH /setup_role_kiemduyet
         for guild_id, role_id in KIEM_DUYET_ROLES.items():
             guild = self.bot.get_guild(guild_id)
             if guild:
                 try:
                     target_channel = guild.system_channel or guild.text_channels[0]
                     async for member in guild.fetch_members(limit=None):
+                        # Quét nếu còn đơn chưa duyệt -> Tự động duyệt và gắn Role cách ly ngay
                         if member.pending:
-                            print(f"📌 [Duyệt đơn hợp lệ] của: {member.name} ({member.id}) tại {guild.name}")
+                            print(f"📌 [Tự động duyệt đơn] {member.name} ({member.id}) tại {guild.name}")
                             await process_member_verification(member, target_channel)
                 except Exception as e:
-                    print(f"Lỗi khi duyệt đơn tại {guild.name}: {e}")
+                    print(f"Lỗi duyệt đơn tại {guild.name}: {e}")
 
-    # Lắng nghe khi thành viên gửi đơn đăng ký mới (chỉ xử lý server đã setup role)
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         if before.pending and not after.pending:
@@ -263,7 +297,6 @@ class KiemDuyetCog(commands.Cog):
                 if system_channel:
                     await process_member_verification(after, system_channel)
 
-    # Lệnh cài đặt Role kiểm duyệt (BẮT BUỘC ĐỂ BOT KÍCH HOẠT DUYỆT Ở SERVER NÀY)
     @app_commands.command(name="setup_role_kiemduyet", description="Chọn Role được phép bấm nút duyệt/ban/kick thành viên (Admin)")
     @app_commands.default_permissions(administrator=True)
     @app_commands.describe(role="Role của Ban kiểm duyệt / Moderator")
@@ -274,7 +307,9 @@ class KiemDuyetCog(commands.Cog):
         KIEM_DUYET_ROLES[guild.id] = role.id
         data_channel = self.bot.get_channel(DATA_CHANNEL_ID)
 
-        # Lưu tin nhắn log chuẩn cấu trúc để bot có thể cào lại sau khi restart
+        # Tự động tạo trước Role cách ly
+        await get_or_create_restricted_role(guild)
+
         if data_channel:
             log_msg = (
                 f"⚙️ **[SETUP ROLE KIỂM DUYỆT]**\n"
@@ -285,16 +320,15 @@ class KiemDuyetCog(commands.Cog):
             )
             await data_channel.send(log_msg)
 
-        await interaction.followup.send(f"✅ Đã bật hệ thống kiểm duyệt và gán Role thành công cho: {role.mention}!", ephemeral=True)
+        await interaction.followup.send(f"✅ Đã bật hệ thống kiểm duyệt tự động & khởi tạo Role cách ly `{VERIFY_ROLE_NAME}` cho server!", ephemeral=True)
 
-    # Lệnh /setup_rule
     @app_commands.command(name="setup_rule", description="Thiết lập hệ thống kiểm duyệt thủ công (Admin)")
     @app_commands.default_permissions(administrator=True)
     async def setup_rule(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
 
         if not os.path.exists(self.rule_image_path):
-            await interaction.followup.send(f"❌ Không tìm thấy file ảnh `{self.rule_image_path}` trong thư mục!", ephemeral=True)
+            await interaction.followup.send(f"❌ Không tìm thấy file ảnh `{self.rule_image_path}`!", ephemeral=True)
             return
 
         guild = interaction.guild
@@ -314,9 +348,8 @@ class KiemDuyetCog(commands.Cog):
             )
             await data_channel.send(setup_log)
 
-        await interaction.followup.send(f"✅ Đã thiết lập thành công! Log lưu về kênh ID: `{DATA_CHANNEL_ID}`", ephemeral=True)
+        await interaction.followup.send(f"✅ Đã thiết lập xong!", ephemeral=True)
 
-    # Lệnh /check
     @app_commands.command(name="check", description="Gọi ban kiểm duyệt vào thread hiện tại để duyệt tài khoản")
     async def check_command(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -350,7 +383,6 @@ class KiemDuyetCog(commands.Cog):
 
         await interaction.followup.send("✅ Đã gửi tín hiệu gọi ban kiểm duyệt thành công!", ephemeral=True)
 
-    # Lệnh text .check
     @commands.command(name="check")
     async def check_text_command(self, ctx):
         if not isinstance(ctx.channel, discord.Thread):
