@@ -2,7 +2,6 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 import threading
 import subprocess
-import requests
 import html
 import time
 import json
@@ -134,7 +133,6 @@ DEFAULT_CONFIG = {
     "bat_bot_guard": True,
     "activity_type": "playing",
     "force_stream": True,
-    "auto_ping": False,
     "stream_url": "https://www.youtube.com/watch?v=9svI65nxVhc",
     "site_title": "KSBot Command Center",
     "bg_url": "",
@@ -157,9 +155,6 @@ def normalize_stream_url(url):
     if not m:
         m = re.match(r"^https://(?:www\.|m\.)?youtube\.com/watch\?(?:[^#]*&)?v=([A-Za-z0-9_-]{6,20})", url)
     return "https://www.youtube.com/watch?v=" + m.group(1) if m else url
-
-# Trạng thái self-ping hiển thị lên dashboard
-PING_STATE = {"ok": 0, "fail": 0, "last_ok": None}
 
 # (key, icon, tên, file, mô tả ngắn)
 MODULES = [
@@ -542,18 +537,6 @@ textarea.msgtext:focus { border-color: var(--accent); }
 details.manual { margin-bottom: 14px; }
 details.manual summary { font-size: 12px; color: var(--muted); cursor: pointer; margin-bottom: 8px; }
 
-/* Công tắc auto ping */
-.pingctl { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
-.pingctl b { display: block; font-size: 14px; }
-.pingctl small { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
-.switch { position: relative; width: 46px; height: 26px; flex: none; }
-.switch input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; cursor: pointer; margin: 0; z-index: 1; }
-.switch .tg { position: absolute; inset: 0; border-radius: 26px; background: #394057; transition: background .2s; }
-.switch .tg::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .2s; }
-.switch input:checked + .tg { background: var(--accent); }
-.switch input:checked + .tg::after { transform: translateX(20px); }
-.switch input:focus-visible + .tg { outline: 2px solid var(--accent); outline-offset: 2px; }
-
 /* Thanh tab chuyển mục */
 .tabs { display: flex; gap: 4px; overflow-x: auto; margin: 0 0 22px; border-bottom: 1px solid var(--line); scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
@@ -657,8 +640,6 @@ PAGE_JS = """
     var chanPick = document.getElementById('chanPick');
     var pickChosen = document.getElementById('pickChosen');
     var manualBox = document.getElementById('manualBox');
-    var pingToggle = document.getElementById('pingToggle');
-    var pingInfo = document.getElementById('pingInfo');
     var siteTitle = document.getElementById('siteTitle');
     var bgUrl = document.getElementById('bgUrl');
     var bgDim = document.getElementById('bgDim');
@@ -759,23 +740,6 @@ PAGE_JS = """
         selChan = null; selChanName = '';
         renderPicker(pickData);
         updateChosen();
-    });
-
-    function pollPing() {
-        fetch('/pingctl', { cache: 'no-store' }).then(function (r) { return r.json(); })
-            .then(function (d) {
-                pingToggle.checked = !!d.enabled;
-                pingInfo.textContent = d.enabled
-                    ? 'Đang bật • ' + d.ok + ' lần OK' + (d.fail ? ' • ' + d.fail + ' lỗi' : '')
-                    : 'Đang tắt • dùng UptimeRobot ping từ ngoài';
-            }).catch(function () { pingInfo.textContent = 'Không kiểm tra được'; });
-    }
-    pingToggle.addEventListener('change', function () {
-        var on = pingToggle.checked;
-        fetch('/pingctl', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'enabled=' + (on ? '1' : '0') })
-            .then(function (r) { return r.json(); })
-            .then(function () { notify(on ? 'Đã bật auto ping' : 'Đã tắt auto ping'); pollPing(); })
-            .catch(function () { notify('Đổi auto ping thất bại', true); pollPing(); });
     });
 
     var COLORS = { online: '#3fc380', idle: '#f5b942', dnd: '#ef5b6b', invisible: '#5c6370', stream: '#9b59ff' };
@@ -1229,8 +1193,6 @@ PAGE_JS = """
     pollActivity();
     pollOutbox();
     pollBotState();
-    pollPing();
-    setInterval(pollPing, 8000);
     setInterval(pollStats, 10000);
     setInterval(pollActivity, 15000);
     setInterval(pollOutbox, 8000);
@@ -1446,16 +1408,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                     <button type="button" class="btn stop small" id="btnStop">Tắt bot</button>
                 </div>
             </div>
-            <div class="pingctl">
-                <div>
-                    <b>Tự ping server (Auto Ping)</b>
-                    <small id="pingInfo">Đang kiểm tra...</small>
-                </div>
-                <label class="switch" title="Bật/tắt auto ping">
-                    <input type="checkbox" id="pingToggle" aria-label="Bật hoặc tắt auto ping">
-                    <span class="tg"></span>
-                </label>
-            </div>
             </section>
 
             <section class="card" data-show="overview">
@@ -1605,7 +1557,7 @@ def render_page(config):
 class DashboardHandler(BaseHTTPRequestHandler):
 
     def _send_ping_ok(self):
-        """Route nhẹ dành riêng cho self-ping: không đọc config, không build HTML."""
+        """Route nhẹ cho UptimeRobot / health check: không đọc config, không build HTML."""
         body = b"OK"
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
@@ -1624,9 +1576,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_ping_ok()
             return
 
-        if self.path in ("/stats", "/activity", "/outbox", "/botctl", "/pingctl"):
+        if self.path in ("/stats", "/activity", "/outbox", "/botctl"):
             payload = {
-                "/pingctl": lambda: {"enabled": bool(read_config().get("auto_ping", False)), **PING_STATE},
                 "/stats": read_stats,
                 "/activity": read_activity,
                 "/outbox": lambda: list(reversed(read_outbox()))[:10],
@@ -1658,7 +1609,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(out)
 
     def do_POST(self):
-        if self.path not in ("/save", "/botctl", "/send-message", "/pingctl"):
+        if self.path not in ("/save", "/botctl", "/send-message"):
             self.send_response(404)
             self.end_headers()
             return
@@ -1674,14 +1625,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         post_data = self.rfile.read(length).decode("utf-8")
         parsed = urllib.parse.parse_qs(post_data, keep_blank_values=True)
-
-        if self.path == "/pingctl":
-            enabled = parsed.get("enabled", [""])[0] == "1"
-            cfg = read_config()
-            cfg["auto_ping"] = enabled
-            write_config(cfg)
-            self._reply_json(200, {"ok": True, "enabled": enabled})
-            return
 
         if self.path == "/botctl":
             action = parsed.get("action", [""])[0]
@@ -1758,7 +1701,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "activity_type": activity_type,
             "status_delay": delay,
             "status_messages": status_list if status_list else list(DEFAULT_CONFIG["status_messages"]),
-            "auto_ping": bool(read_config().get("auto_ping", False)),
         }
         for key, *_ in MODULES:
             new_config[key] = key in parsed
@@ -1778,64 +1720,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         # Bớt spam log GET /ping, log gọn lại
-        quiet_paths = ("/ping", "/healthz", "/stats", "/activity", "/outbox", "/botctl", "/pingctl")
+        quiet_paths = ("/ping", "/healthz", "/stats", "/activity", "/outbox", "/botctl")
         if self.path not in quiet_paths:
             super().log_message(format, *args)
-
-
-def self_ping():
-    """Tự gọi vào /ping của chính mình liên tục (mặc định 20 giây/lần).
-
-    Lưu ý: self-ping không đảm bảo 100% Render free không ngủ, vì request
-    đi ra rồi quay lại không phải lúc nào cũng được tính là traffic. Nên
-    dùng thêm UptimeRobot / cron-job.org ping từ bên ngoài mỗi 5 phút.
-    """
-    time.sleep(10)  # chờ web server khởi động xong
-
-    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-    base_url = (
-        os.environ.get("RENDER_EXTERNAL_URL")
-        or os.environ.get("RENDER_URL")
-        or (f"https://{railway_domain}" if railway_domain else None)
-        or "https://ks-bot-vkm6.onrender.com"
-    ).rstrip("/")
-    url = f"{base_url}/ping"
-    interval = int(os.environ.get("PING_INTERVAL", 20))  # giây
-    headers = {"User-Agent": "Mozilla/5.0 (KSBot-KeepAlive)"}
-    ping_count = 0
-    fail_count = 0
-
-    print(f"\n[Auto-Ping] Đã bật tự ping mỗi {interval}s tới: {url}")
-    print("------------------------------------------------------------")
-
-    while True:
-        # Công tắc trên dashboard: tắt thì nghỉ, kiểm tra lại sau 3 giây
-        if not read_config().get("auto_ping", False):
-            time.sleep(3)
-            continue
-        try:
-            start_time = time.time()
-            response = requests.get(url, timeout=15, headers=headers)
-            latency = round((time.time() - start_time) * 1000, 2)
-            if response.status_code == 200:
-                ping_count += 1
-                fail_count = 0
-                PING_STATE["ok"] += 1
-                PING_STATE["last_ok"] = time.time()
-                # Chỉ log mỗi 15 lần (~5 phút) cho đỡ spam
-                if ping_count % 15 == 0:
-                    now = time.strftime("%H:%M:%S - %d/%m/%Y")
-                    print(f"[{now}] ✅ Ping #{ping_count} OK | {latency}ms")
-            else:
-                fail_count += 1
-                print(f"⚠️ Cảnh báo: mã phản hồi lạ: {response.status_code}")
-        except Exception as e:
-            fail_count += 1
-            PING_STATE["fail"] += 1
-            print(f"❌ [Lỗi tự ping] (lỗi liên tiếp: {fail_count}): {e}")
-
-        # Lỗi nhiều lần thì thử lại nhanh hơn
-        time.sleep(5 if fail_count >= 3 else interval)
 
 
 def run_web():
@@ -1931,9 +1818,5 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_web)
     t.daemon = True
     t.start()
-
-    t_ping = threading.Thread(target=self_ping)
-    t_ping.daemon = True
-    t_ping.start()
 
     run_bot_forever()
