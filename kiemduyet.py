@@ -140,28 +140,28 @@ async def get_or_create_restricted_role(guild: discord.Guild) -> discord.Role:
     return role
 
 
-# Hàm xử lý chung tự động Duyệt đơn + Nhét Role + Phân luồng kiểm duyệt
+# Hàm xử lý chung: Nhét Role cách ly + Phân luồng kiểm duyệt
 async def process_member_verification(user: discord.Member, channel: discord.abc.GuildChannel, interaction: discord.Interaction = None):
     guild = user.guild
     
     if guild.id not in KIEM_DUYET_ROLES:
         return
 
-    # 1. TỰ ĐỘNG CHẤP THUẬN ĐƠN DÀNH CHO CÁC MEMBER ĐANG PENDING
-    if user.pending:
-        try:
-            await user.edit(pending=False, reason="Bot tự động duyệt đơn để đưa vào kiểm duyệt")
-            print(f"✅ [AUTO APPROVE] Đã tự động chấp thuận đơn đăng ký của {user.name}")
-        except Exception as e:
-            print(f"Lỗi tự động duyệt đơn: {e}")
-
-    # 2. TỰ ĐỘNG GÁN ROLE CÁCH LY
+    # 1. TỰ ĐỘNG GÁN ROLE CÁCH LY
     restricted_role = await get_or_create_restricted_role(guild)
     if restricted_role and restricted_role not in user.roles:
         try:
             await user.add_roles(restricted_role, reason="Gán role cách ly kiểm duyệt")
         except Exception as e:
             print(f"Lỗi gán role cách ly: {e}")
+
+    # 2. Member còn đang "Chờ xử lý" (chưa qua Membership Screening / đơn gia nhập):
+    #    Bot KHÔNG thể tự duyệt đơn này (discord.py không có tham số pending, Discord cũng
+    #    không cho bot chấp thuận đơn). Chỉ gán role cách ly rồi dừng; khi Mod duyệt xong,
+    #    sự kiện on_member_update (pending True -> False) sẽ gọi lại hàm này để chạy tiếp.
+    if user.pending:
+        print(f"⏳ [PENDING] {user.name} ({user.id}) tại {guild.name} đang chờ Mod duyệt đơn, đã gán role cách ly")
+        return
 
     now = datetime.now(timezone.utc)
     account_age_days = (now - user.created_at).days
@@ -175,7 +175,7 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
             description=f"Cảm ơn {user.mention} đã hoàn tất! Bạn đã được đưa vào hệ thống kiểm duyệt.",
             color=discord.Color.green()
         )
-        await interaction.response.send_message(embed_completed, ephemeral=True)
+        await interaction.response.send_message(embed=embed_completed, ephemeral=True)
 
     if data_channel:
         log_detail = (
@@ -197,6 +197,11 @@ async def process_member_verification(user: discord.Member, channel: discord.abc
             ),
             color=discord.Color.gold()
         )
+        if interaction:
+            try:
+                await interaction.followup.send(embed=embed_voice, ephemeral=True)
+            except Exception as e:
+                print(f"Lỗi gửi yêu cầu voice: {e}")
         if data_channel:
             await data_channel.send(content=f"🔔 **[CẦN VOICE CHECK]** Thành viên {user.mention} tại `{guild.name}`.")
         return
@@ -256,7 +261,7 @@ class KiemDuyetCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("🔍 [BOT STARTUP] Khôi phục cài đặt và duyệt đơn tự động...")
+        print("🔍 [BOT STARTUP] Khôi phục cài đặt và gán role cách ly cho member đang chờ...")
         
         data_channel = self.bot.get_channel(DATA_CHANNEL_ID)
         if data_channel:
@@ -271,10 +276,13 @@ class KiemDuyetCog(commands.Cog):
                                 guild_id = int(line.split("`")[1])
                             if "• **Role được chọn:**" in line and "`" in line:
                                 role_id = int(line.split("`")[1])
-                        if guild_id and role_id:
+                        if guild_id and role_id and guild_id not in KIEM_DUYET_ROLES:
                             KIEM_DUYET_ROLES[guild_id] = role_id
+                print(f"🔍 [BOT STARTUP] Đã khôi phục {len(KIEM_DUYET_ROLES)} server: {list(KIEM_DUYET_ROLES.keys())}")
             except Exception as e:
                 print(f"Lỗi cào dữ liệu: {e}")
+        else:
+            print(f"⚠️ [BOT STARTUP] Không thấy kênh log {DATA_CHANNEL_ID}, không khôi phục được cài đặt kiểm duyệt!")
 
         for guild_id, role_id in KIEM_DUYET_ROLES.items():
             guild = self.bot.get_guild(guild_id)
@@ -282,12 +290,11 @@ class KiemDuyetCog(commands.Cog):
                 try:
                     target_channel = guild.system_channel or guild.text_channels[0]
                     async for member in guild.fetch_members(limit=None):
-                        # Quét nếu còn đơn chưa duyệt -> Tự động duyệt và gắn Role cách ly ngay
+                        # Member còn pending -> chỉ gán role cách ly (hàm tự dừng lại ở đó)
                         if member.pending:
-                            print(f"📌 [Tự động duyệt đơn] {member.name} ({member.id}) tại {guild.name}")
                             await process_member_verification(member, target_channel)
                 except Exception as e:
-                    print(f"Lỗi duyệt đơn tại {guild.name}: {e}")
+                    print(f"Lỗi quét member tại {guild.name}: {e}")
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
@@ -296,6 +303,13 @@ class KiemDuyetCog(commands.Cog):
                 system_channel = after.guild.system_channel or after.guild.text_channels[0]
                 if system_channel:
                     await process_member_verification(after, system_channel)
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        # Member mới vào: nếu đang pending thì gán role cách ly ngay
+        if member.pending and member.guild.id in KIEM_DUYET_ROLES:
+            system_channel = member.guild.system_channel or member.guild.text_channels[0]
+            await process_member_verification(member, system_channel)
 
     @app_commands.command(name="setup_role_kiemduyet", description="Chọn Role được phép bấm nút duyệt/ban/kick thành viên (Admin)")
     @app_commands.default_permissions(administrator=True)
@@ -352,11 +366,11 @@ class KiemDuyetCog(commands.Cog):
 
     @app_commands.command(name="check", description="Gọi ban kiểm duyệt vào thread hiện tại để duyệt tài khoản")
     async def check_command(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        
         if not isinstance(interaction.channel, discord.Thread):
             await interaction.response.send_message("❌ Lệnh này chỉ dùng được bên trong phòng Thread kiểm duyệt!", ephemeral=True)
             return
+
+        await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
         data_channel = self.bot.get_channel(DATA_CHANNEL_ID)
