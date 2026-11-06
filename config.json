@@ -2,10 +2,10 @@
     "prefix": ".",
     "accent": "#8b9bff",
     "bat_status": true,
-    "status_mode": "idle",
+    "status_mode": "online",
     "force_stream": false,
     "activity_type": "playing",
-    "platform": "vr",
+    "platform": "ios",
     "status_delay": 5,
     "status_messages": [
         "🤖 {guilds} server | {members} members",
@@ -21,7 +21,7 @@
     "bat_yt_notify": true,
     "bat_owner_mute": true,
     "bat_bot_guard": true,
-    "site_title": "KS-BOT COMMAD",
+    "site_title": "KSBot Command Center",
     "bg_url": "",
     "bg_dim": 60
 }
