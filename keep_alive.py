@@ -132,7 +132,8 @@ DEFAULT_CONFIG = {
     "bat_owner_mute": True,
     "bat_bot_guard": True,
     "activity_type": "playing",
-    "force_stream": True,
+    "force_stream": False,
+    "platform": "vr",
     "stream_url": "https://www.youtube.com/watch?v=9svI65nxVhc",
     "site_title": "KSBot Command Center",
     "bg_url": "",
@@ -178,6 +179,15 @@ ACTIVITY_TYPES = [
 ]
 ACTIVITY_LABELS = {k: name for k, _i, name, _d in ACTIVITY_TYPES}
 
+# Thiết bị hiển thị cạnh tên bot (status.py đọc key "platform" khi bot đăng nhập)
+PLATFORM_OPTIONS = [
+    ("vr",      "🥽", "VR",       "Discord VR / Quest"),
+    ("android", "🤖", "Android",  "Biểu tượng điện thoại"),
+    ("ios",     "📱", "iOS",      "Biểu tượng điện thoại"),
+    ("default", "💻", "Mặc định", "Như bot bình thường"),
+]
+PLATFORM_KEYS = [p[0] for p in PLATFORM_OPTIONS]
+
 
 INVITE_URL = "https://discord.com/oauth2/authorize?client_id=1536638391397908601&scope=applications.commands%20bot&permissions=8"
 
@@ -215,6 +225,17 @@ def stop_bot():
     with BOT_LOCK:
         BOT_STATE["should_run"] = False
         BOT_STATE["stopped_by_user"] = True
+        p = BOT_STATE["process"]
+    if p is not None and p.poll() is None:
+        p.terminate()
+
+
+def restart_bot():
+    """Tắt tiến trình bot hiện tại, run_bot_forever sẽ tự bật lại."""
+    with BOT_LOCK:
+        BOT_STATE["should_run"] = True
+        BOT_STATE["stopped_by_user"] = False
+        BOT_STATE["cooldown_until"] = None
         p = BOT_STATE["process"]
     if p is not None and p.poll() is None:
         p.terminate()
@@ -485,9 +506,11 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--accen
 .botctl-state i { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
 .botctl-state.on i { background: var(--ok); box-shadow: 0 0 0 3px rgba(63,195,128,.18); }
 .botctl-state.off i { background: var(--bad); }
-.botctl-btns { display: flex; gap: 8px; }
+.botctl-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn.start { background: var(--ok); color: #06180f; }
 .btn.stop { background: var(--bad); color: #2a0a0a; }
+.btn.restart { background: var(--panel-2); border: 1px solid var(--line); color: var(--text); }
+.btn.restart:hover:not(:disabled) { border-color: var(--accent); }
 .btn.small { padding: 8px 14px; font-size: 13px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -633,6 +656,7 @@ PAGE_JS = """
     var botState = document.getElementById('botState');
     var btnStart = document.getElementById('btnStart');
     var btnStop = document.getElementById('btnStop');
+    var btnRestart = document.getElementById('btnRestart');
     var chIdInput = document.getElementById('chId');
     var msgContent = document.getElementById('msgContent');
     var sendBtn = document.getElementById('sendBtn');
@@ -783,6 +807,8 @@ PAGE_JS = """
         form.querySelectorAll('.mod input[type=checkbox]').forEach(function (c) {
             if (c.checked) p.set(c.name, 'on');
         });
+        var pl = form.querySelector('input[name="platform"]:checked');
+        p.set('platform', pl ? pl.value : 'vr');
         return p;
     }
 
@@ -1011,6 +1037,7 @@ PAGE_JS = """
                     : (cool > 0 ? 'Discord đang chặn IP, tự thử lại sau ~' + cool + ' phút' : 'Bot đã dừng');
                 btnStart.disabled = d.running;
                 btnStop.disabled = !d.running;
+                btnRestart.disabled = !d.running;
             })
             .catch(function () {
                 botState.className = 'botctl-state off';
@@ -1025,6 +1052,11 @@ PAGE_JS = """
     btnStop.addEventListener('click', function () {
         fetch('/botctl', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=stop' })
             .then(pollBotState).then(function () { notify('Đã tắt bot'); });
+    });
+    btnRestart.addEventListener('click', function () {
+        if (!confirm('Khởi động lại bot? Bot sẽ offline vài giây.')) return;
+        fetch('/botctl', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=restart' })
+            .then(function () { notify('Đang khởi động lại bot...'); setTimeout(pollBotState, 1500); });
     });
 
     sendBtn.addEventListener('click', function () {
@@ -1311,6 +1343,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                 </div>
 
                 <div class="field">
+                    <span class="label">Thiết bị hiển thị (biểu tượng cạnh tên bot)</span>
+                    <div class="modes">__PLATFORMS__</div>
+                    <p class="hint">Lưu xong phải bấm <b>Khởi động lại</b> ở tab Tổng quan thì Discord mới nhận.</p>
+                </div>
+
+                <div class="field">
                     <label for="streamUrl">Link Stream (dùng cho loại Streaming)</label>
                     <input type="text" id="streamUrl" name="stream_url" value="__STREAM_URL__" placeholder="https://www.twitch.tv/ten_kenh" autocomplete="off">
                     <p class="hint">Chỉ nhận link twitch.tv/... hoặc YouTube (youtu.be/... tự đổi sang youtube.com/watch?v=...). Có link hợp lệ thì Discord mới hiện nút Xem màu tím.</p>
@@ -1400,11 +1438,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
             <section class="card" data-show="overview">
             <h2>Điều khiển bot</h2>
-            <p class="sub" style="margin-bottom:0">Bật hoặc tắt hẳn tiến trình bot, không chỉ ẩn trạng thái.</p>
+            <p class="sub" style="margin-bottom:0">Bật, tắt hoặc khởi động lại hẳn tiến trình bot, không chỉ ẩn trạng thái.</p>
             <div class="botctl">
                 <div class="botctl-state" id="botState"><i></i><span>Đang kiểm tra...</span></div>
                 <div class="botctl-btns">
                     <button type="button" class="btn start small" id="btnStart">Bật bot</button>
+                    <button type="button" class="btn restart small" id="btnRestart">Khởi động lại</button>
                     <button type="button" class="btn stop small" id="btnStop">Tắt bot</button>
                 </div>
             </div>
@@ -1482,7 +1521,7 @@ def render_page(config):
         ) % {"k": key, "c": checked, "i": icon, "n": esc(name), "d": esc(desc)}
 
     mode = config.get("status_mode", "online")
-    if config.get("force_stream", True):
+    if config.get("force_stream", False):
         mode = "stream"
     try:
         delay = max(1, min(60, int(config.get("status_delay", 5))))
@@ -1498,6 +1537,17 @@ def render_page(config):
         '<div>%(n)s<small>%(d)s</small></div></span></label>'
         % {"k": k, "i": icon, "n": esc(name), "d": esc(desc), "c": "checked" if k == activity else ""}
         for k, icon, name, desc in ACTIVITY_TYPES
+    )
+
+    platform = config.get("platform", "vr")
+    if platform not in PLATFORM_KEYS:
+        platform = "vr"
+    platform_html = "".join(
+        '<label class="mode"><input type="radio" name="platform" value="%(k)s" %(c)s>'
+        '<span><span class="mode-ico">%(i)s</span>'
+        '<div>%(n)s<small>%(d)s</small></div></span></label>'
+        % {"k": k, "i": icon, "n": esc(name), "d": esc(desc), "c": "checked" if k == platform else ""}
+        for k, icon, name, desc in PLATFORM_OPTIONS
     )
 
     accent = config.get("accent")
@@ -1523,6 +1573,7 @@ def render_page(config):
     page = page.replace("__M_INVISIBLE__", "checked" if mode == "invisible" else "")
     page = page.replace("__M_STREAM__", "checked" if mode == "stream" else "")
     page = page.replace("__ACTIVITY_TYPES__", activity_html)
+    page = page.replace("__PLATFORMS__", platform_html)
     page = page.replace("__MSG_ROWS__", msg_rows)
     page = page.replace("__MODULES__", mods_html)
     page = page.replace("__INVITE_URL__", esc(INVITE_URL))
@@ -1632,8 +1683,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 start_bot()
             elif action == "stop":
                 stop_bot()
+            elif action == "restart":
+                restart_bot()
             else:
-                self._reply_json(400, {"ok": False, "error": "action phải là start hoặc stop"})
+                self._reply_json(400, {"ok": False, "error": "action phải là start, stop hoặc restart"})
                 return
             self._reply_json(200, {"ok": True, **bot_status()})
             return
@@ -1671,6 +1724,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if activity_type not in ACTIVITY_LABELS:
             activity_type = "playing"
 
+        platform = parsed.get("platform", ["vr"])[0]
+        if platform not in PLATFORM_KEYS:
+            platform = "vr"
+
         prefix = parsed.get("prefix", ["!"])[0].strip() or "!"
 
         accent = parsed.get("accent", [ACCENT_VALUES[0]])[0]
@@ -1695,6 +1752,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "bg_dim": bg_dim,
             "stream_url": stream_url,
             "force_stream": force_stream,
+            "platform": platform,
             "prefix": prefix[:5],
             "accent": accent,
             "status_mode": mode,
@@ -1704,7 +1762,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         }
         for key, *_ in MODULES:
             new_config[key] = key in parsed
-        write_config(new_config)
+
+        # Gộp với config cũ để không làm mất các key do bot/lệnh Discord ghi
+        merged = read_config()
+        merged.update(new_config)
+        write_config(merged)
 
         if self.headers.get("X-Requested-With") == "fetch":
             out = b'{"ok": true}'
@@ -1801,7 +1863,7 @@ def run_bot_forever():
 
         if ran_seconds >= MIN_HEALTHY_RUN_SECONDS:
             # Chạy ổn một thời gian rồi mới tắt (ví dụ Render deploy lại
-            # bình thường) -> không tính là crash loop, reset về chờ ngắn
+            # bình thường, hoặc bấm Khởi động lại) -> không tính là crash loop
             backoff = BACKOFF_START
             rate_limit_hits = 0
         else:
