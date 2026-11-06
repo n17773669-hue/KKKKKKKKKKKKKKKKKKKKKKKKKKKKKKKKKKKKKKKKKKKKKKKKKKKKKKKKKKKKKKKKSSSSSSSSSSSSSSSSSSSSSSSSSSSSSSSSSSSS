@@ -5,6 +5,7 @@ import time
 import asyncio
 import sqlite3
 import datetime
+import vr_patch
 import math
 import re
 import json
