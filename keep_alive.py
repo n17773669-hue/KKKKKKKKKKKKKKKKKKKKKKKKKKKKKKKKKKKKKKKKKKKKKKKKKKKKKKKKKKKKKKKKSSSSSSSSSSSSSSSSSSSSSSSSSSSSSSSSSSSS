@@ -623,6 +623,8 @@ body.has-bg .card { background: rgba(21,25,35,.78); -webkit-backdrop-filter: blu
 .pg:disabled { opacity: .4; cursor: not-allowed; }
 .err-reason { color: var(--bad) !important; margin-top: 2px; }
 
+.sub-label { margin-top: 16px; }
+
 @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; }
 }
@@ -1334,18 +1336,15 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                         <label class="mode"><input type="radio" name="status_mode" value="stream" __M_STREAM__>
                             <span><i class="dot" style="background:#9b59ff"></i><div>Stream<small>Chấm tím + nút Xem</small></div></span></label>
                     </div>
+                    <span class="label sub-label">Thiết bị (biểu tượng điện thoại / VR thay cho chấm)</span>
+                    <div class="modes">__PLATFORMS__</div>
+                    <p class="hint">Đổi thiết bị phải bấm <b>Khởi động lại</b> ở tab Tổng quan thì Discord mới nhận. Đổi màu chấm thì không cần.</p>
                 </div>
 
                 <div class="field">
                     <span class="label">Loại hoạt động (chữ hiện trước câu status)</span>
                     <div class="modes">__ACTIVITY_TYPES__</div>
                     <p class="hint">Chọn nút <b>Stream</b> ở trên thì loại hoạt động này bị bỏ qua. Ví dụ chọn "Đang nghe" thì Discord hiện "KSBot — Đang nghe gõ !help để xem lệnh".</p>
-                </div>
-
-                <div class="field">
-                    <span class="label">Thiết bị hiển thị (biểu tượng cạnh tên bot)</span>
-                    <div class="modes">__PLATFORMS__</div>
-                    <p class="hint">Lưu xong phải bấm <b>Khởi động lại</b> ở tab Tổng quan thì Discord mới nhận.</p>
                 </div>
 
                 <div class="field">
