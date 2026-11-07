@@ -188,6 +188,18 @@ def build_rpc(body):
     elif t == "dm_open":
         p["user_id"] = _id(body.get("user_id"))
         ok = p["user_id"]
+    elif t == "guilds":
+        ok = True
+    elif t == "members":
+        p["guild_id"] = _id(body.get("guild_id"))
+        ok = p["guild_id"]
+    elif t == "profile":
+        p["user_id"] = _id(body.get("user_id"))
+        p["guild_id"] = _id(body.get("guild_id"))
+        ok = p["user_id"]
+    elif t == "unread":
+        p["open"] = _id(body.get("open"))
+        ok = True
     else:
         return None, "Lệnh không hợp lệ"
     if not ok:
@@ -836,6 +848,68 @@ html.chat-lock .dc { height: calc(100vh - 150px); }
 .login h1 { font-size: 20px; margin-bottom: 6px; }
 .login .err { color: var(--bad); font-size: 13px; margin-bottom: 10px; }
 .login button { width: 100%; margin-top: 14px; }
+
+/* ===== v2: chat rộng, unread, thành viên, profile ===== */
+body[data-tab="chat"] .wrap { max-width: none; padding: 8px 10px 0; }
+body[data-tab="chat"] .top { display: none; }
+body[data-tab="chat"] .tabs { margin-bottom: 8px; }
+.dc { position: relative; grid-template-columns: 64px 220px minmax(0, 1fr); height: calc(100vh - 64px); height: calc(100dvh - 64px); min-height: 420px; margin-bottom: 0; }
+.dc.show-mem { grid-template-columns: 64px 220px minmax(0, 1fr) 240px; }
+html.chat-lock .dc { height: calc(100vh - 64px); height: calc(100dvh - 64px); }
+.rw { position: relative; flex: none; }
+.rw .dotu { position: absolute; left: -9px; top: 50%; width: 8px; height: 8px; margin-top: -4px; background: #fff; border-radius: 50%; }
+.bdg { background: #f23f43; color: #fff; font-size: 11px; font-weight: 700; border-radius: 10px; min-width: 18px; height: 18px; line-height: 18px; text-align: center; padding: 0 5px; flex: none; }
+.rw .bdg { position: absolute; right: -4px; bottom: -4px; border: 3px solid #1e1f22; box-sizing: content-box; }
+.chan { position: relative; }
+.chan.unr { color: #fff; font-weight: 700; }
+.chan.unr::before { content: ""; position: absolute; left: -6px; top: 50%; width: 4px; height: 8px; margin-top: -4px; background: #fff; border-radius: 0 4px 4px 0; }
+.chan .bdg { margin-left: auto; }
+.dc-members { display: none; background: #2b2d31; flex-direction: column; overflow-y: auto; padding: 8px; min-height: 0; overscroll-behavior: contain; }
+.dc.show-mem .dc-members { display: flex; }
+.mem { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; padding: 5px 8px; border-radius: 6px; cursor: pointer; color: #dbdee1; text-align: left; font-size: 14px; }
+.mem:hover { background: #35373c; }
+.mem.off { opacity: .55; }
+.mem .mav { position: relative; width: 32px; height: 32px; flex: none; }
+.mem .mav img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; display: block; }
+.mem .st { position: absolute; right: -3px; bottom: -3px; width: 10px; height: 10px; border-radius: 50%; border: 3px solid #2b2d31; background: #80848e; box-sizing: content-box; }
+.st.s-online { background: #23a55a; } .st.s-idle { background: #f0b232; } .st.s-dnd { background: #f23f43; }
+.mem .mn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-new { position: absolute; left: 50%; bottom: 86px; transform: translateX(-50%); z-index: 6; background: #5865f2; color: #fff; border: 0; border-radius: 999px; padding: 6px 16px; font-size: 13px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+.dc-ac { position: absolute; left: 16px; right: 16px; bottom: 64px; background: #2b2d31; border: 1px solid #1e1f22; border-radius: 10px; padding: 6px; z-index: 12; box-shadow: 0 8px 24px rgba(0,0,0,.5); max-height: 280px; overflow: auto; }
+.dc-ac button { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; color: #dbdee1; padding: 6px 8px; border-radius: 6px; cursor: pointer; text-align: left; font-size: 14px; }
+.dc-ac button.on, .dc-ac button:hover { background: #404249; }
+.dc-ac img { width: 24px; height: 24px; border-radius: 50%; }
+.dc-ac .ai { width: 24px; text-align: center; font-weight: 700; color: #949ba4; }
+.dc-ac small { color: #949ba4; margin-left: auto; }
+.dc-modal { position: absolute; inset: 0; background: rgba(0,0,0,.6); display: grid; place-items: center; z-index: 30; padding: 12px; }
+.prof { width: 340px; max-width: 100%; max-height: 100%; overflow: auto; background: #111214; border-radius: 12px; }
+.prof .pb { height: 100px; background: #5865f2 center / cover no-repeat; }
+.prof .pbody { padding: 0 16px 16px; }
+.prof .pav { width: 80px; height: 80px; border-radius: 50%; border: 6px solid #111214; margin-top: -40px; background: #1e1f22; object-fit: cover; display: block; }
+.prof h3 { font-size: 20px; margin-top: 6px; display: flex; gap: 8px; align-items: center; }
+.prof .un { color: #b5bac1; font-size: 13px; }
+.prof .box { background: #1e1f22; border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 13px; }
+.prof .box b { display: block; font-size: 11px; text-transform: uppercase; color: #b5bac1; margin: 8px 0 2px; }
+.prof .box b:first-child { margin-top: 0; }
+.prof code { background: #2b2d31; padding: 1px 6px; border-radius: 4px; user-select: all; }
+.role { display: inline-flex; align-items: center; gap: 5px; background: #2b2d31; border-radius: 6px; padding: 2px 8px; margin: 2px 4px 2px 0; font-size: 12px; }
+.role i { width: 10px; height: 10px; border-radius: 50%; background: #99aab5; }
+.pbtns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.pbtn { background: #2b2d31; border: 0; color: #dbdee1; border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; font-weight: 600; }
+.pbtn:hover { background: #3a3c42; } .pbtn.pri { background: #5865f2; color: #fff; }
+.dc-pop { width: 400px; max-height: 380px; }
+.dc-pop.wide { width: 520px; max-height: 460px; }
+.gif-grid { columns: 3; }
+.pop-tabs { flex-wrap: wrap; }
+.pop-tabs button { font-size: 16px; }
+.emo-grid { grid-template-columns: repeat(9, 1fr); }
+.emo-grid button { font-size: 24px; }
+@media (max-width: 800px) {
+    .dc, .dc.show-mem { grid-template-columns: 56px minmax(0, 1fr); }
+    .dc.show-mem .dc-members { position: absolute; right: 0; top: 0; bottom: 0; width: 230px; z-index: 15; box-shadow: -8px 0 24px rgba(0,0,0,.5); }
+    .dc-pop, .dc-pop.wide { width: calc(100% - 16px); }
+    .gif-grid { columns: 2; }
+}
 """
 
 PAGE_JS = r"""
@@ -1218,9 +1292,29 @@ PAGE_JS = r"""
             replyBar = document.getElementById('dcReply'), filesBar = document.getElementById('dcFiles'),
             sendBtn = document.getElementById('dcSend');
         var C = { guild: null, chan: null, name: '', isDM: false, canSend: true, list: [], lastId: null,
-                  reply: null, pending: [], tick: 0, busy: false, sending: false, seq: 0, railSig: '',
-                  chCache: {}, popMode: 'compose', popMsg: null, popTab: 'uni', guilds: [] };
-        var UNI = '😀 😁 😂 🤣 😊 😍 😘 😎 🤔 😅 😭 😡 🥺 😴 🤯 🥳 👍 👎 👏 🙏 💪 👀 🔥 ✨ 💯 ❤️ 💔 💜 🎉 🎁 ✅ ❌ ⭐ 🌟 💀 👑 🐺 🍀 🎮 🎲 💰 🧧 🌙 ☀️ 😈 🤝 🙌 😢 😏 🥰 😱 🤡 💩 👋 😆 😋'.split(' ');
+                  reply: null, pending: [], tick: 0, busy: false, sending: 0, seq: 0, railSig: '',
+                  chCache: {}, popMode: 'compose', popMsg: null, popTab: 'u0', guilds: [],
+                  members: {}, unread: {}, me: null, fullGuilds: false, showMem: false, srvEmoji: null, mentionMap: {}, prof: null };
+        function rng(ranges) {
+            var seen = {}, out = [];
+            ranges.forEach(function (r) {
+                for (var i = r[0]; i <= r[1]; i++) {
+                    var ch = String.fromCodePoint(i);
+                    if (/\p{Emoji_Presentation}/u.test(ch)) { if (!seen[ch]) { seen[ch] = 1; out.push(ch); } }
+                    else if (i > 0xFF && /\p{Emoji}/u.test(ch)) { ch += '\uFE0F'; if (!seen[ch]) { seen[ch] = 1; out.push(ch); } }
+                }
+            });
+            return out;
+        }
+        var CATS = [
+            ['😀', 'Mặt', [[0x1F600, 0x1F64F], [0x1F910, 0x1F93F], [0x1F970, 0x1F97F], [0x1FAE0, 0x1FAEF]]],
+            ['👋', 'Người & tay', [[0x1F440, 0x1F49F], [0x1F90C, 0x1F90F], [0x1F9B0, 0x1F9BF], [0x261D, 0x261D], [0x270A, 0x270D]]],
+            ['🐶', 'Thiên nhiên & đồ ăn', [[0x1F300, 0x1F37F], [0x1F400, 0x1F43F], [0x1F980, 0x1F9AF]]],
+            ['🎮', 'Hoạt động & vật', [[0x1F380, 0x1F3FA], [0x1F4A0, 0x1F4FF], [0x1F9E0, 0x1F9FF], [0x1FA70, 0x1FAFF]]],
+            ['🚗', 'Du lịch', [[0x1F680, 0x1F6FF], [0x1F3E0, 0x1F3F0]]],
+            ['❤️', 'Ký hiệu', [[0x2600, 0x27BF], [0x2B1B, 0x2B55], [0x1F500, 0x1F53D], [0x1F7E0, 0x1F7EB]]]
+        ];
+        var CAT_CACHE = {};
 
         function h(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
         function rpc(type, data) {
@@ -1267,10 +1361,10 @@ PAGE_JS = r"""
             var grp = prev && prev.author.id === m.author.id && !m.reply && (m.ts - prev.ts) < 420;
             var o = '<div class="m' + (grp ? '' : ' first') + '" data-id="' + h(m.id) + '" data-act="sel">';
             o += grp ? '<div class="gut">' + tfmt(m.ts).slice(-5) + '</div>'
-                     : '<img class="av" data-act="dm" data-uid="' + h(m.author.id) + '" loading="lazy" alt="" src="' + h(m.author.avatar) + '">';
+                     : '<img class="av" data-act="prof" data-uid="' + h(m.author.id) + '" loading="lazy" alt="" src="' + h(m.author.avatar) + '">';
             o += '<div class="body">';
             if (m.reply) o += '<div class="rep">↪ <b>' + h(m.reply.author || '?') + '</b> ' + h(m.reply.content || '(tin nhắn gốc)') + '</div>';
-            if (!grp) o += '<div class="head"><span class="nm" data-act="dm" data-uid="' + h(m.author.id) + '">' + h(m.author.name) + '</span>' + (m.author.bot ? '<span class="tag">BOT</span>' : '') + '<span class="ts">' + tfmt(m.ts) + '</span></div>';
+            if (!grp) o += '<div class="head"><span class="nm" data-act="prof" data-uid="' + h(m.author.id) + '">' + h(m.author.name) + '</span>' + (m.author.bot ? '<span class="tag">BOT</span>' : '') + '<span class="ts">' + tfmt(m.ts) + '</span></div>';
             var gifOnly = (m.embeds || []).length && /^https?:\/\/\S*(tenor|giphy)\.com\S*$/i.test((m.content || '').trim());
             if (m.content && !gifOnly) o += '<div class="txt">' + fmt(m.content) + (m.edited ? ' <span class="ed">(đã sửa)</span>' : '') + '</div>';
             (m.atts || []).forEach(function (a) {
@@ -1310,22 +1404,27 @@ PAGE_JS = r"""
             return out;
         }
 
+        function nearBottom() { return msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 90; }
         function loadHist(incremental, stick) {
             if (!C.chan || C.busy) return Promise.resolve();
             C.busy = true;
-            var seq = C.seq, req = { channel_id: C.chan, limit: incremental && C.lastId ? 50 : Math.min(100, Math.max(50, C.list.length)) };
-            if (incremental && C.lastId) req.after = C.lastId;
+            var seq = C.seq, inc = incremental && C.lastId,
+                req = { channel_id: C.chan, limit: inc ? 50 : Math.min(100, Math.max(50, C.list.length)) };
+            if (inc) req.after = C.lastId;
             return rpc('history', req).then(function (d) {
                 if (seq !== C.seq) return;
                 C.canSend = d.channel.can_send;
                 syncComposer();
-                if (incremental && C.lastId) {
+                if (inc) {
                     if (!d.messages.length) return;
+                    var was = nearBottom();
                     C.list = mergeById(C.list, d.messages).slice(-300);
+                    renderMsgs(stick);
+                    if (!was && !stick) document.getElementById('dcNew').hidden = false;
                 } else {
                     C.list = d.messages;
+                    renderMsgs(stick);
                 }
-                renderMsgs(stick);
             }).catch(function (e) {
                 if (seq !== C.seq) return;
                 if (!C.list.length) msgs.innerHTML = '<div class="dc-empty">' + h(e.message) + '</div>';
@@ -1347,23 +1446,29 @@ PAGE_JS = r"""
             msgs.innerHTML = '<div class="dc-empty">Đang tải tin nhắn...</div>';
             dc.classList.add('in-chat');
             syncComposer(); markChan(); saveLast();
+            document.getElementById('dcNew').hidden = true; pollUnread();
             loadHist(false, true);
         }
         function markChan() {
             chans.querySelectorAll('.chan').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-id') === C.chan); });
+            paintChans();
         }
 
-        /* --- thanh bên trái: server + DM --- */
+        /* --- thanh bên trái: server + DM + chưa đọc --- */
+        function unreadFor(pred) { var n = 0, m = 0; for (var k in C.unread) { var u = C.unread[k]; if (pred(u)) { n += u.n; m += u.m; } } return { n: n, m: m }; }
+        function badge(x) { return x.m ? '<span class="bdg">' + (x.m > 99 ? '99+' : x.m) + '</span>' : (x.n ? '<i class="dotu"></i>' : ''); }
         function renderRail(list) {
-            C.guilds = (list || []).filter(function (g) { return g && g.id != null; });
-            var sig = JSON.stringify(C.guilds.map(function (g) { return [g.id, g.icon]; })) + C.guild;
+            if (list) C.guilds = list.filter(function (g) { return g && g.id != null; });
+            var sig = JSON.stringify(C.guilds.map(function (g) { return [g.id, g.icon]; })) + C.guild + JSON.stringify(C.unread) + (C.me ? C.me.avatar : '');
             if (sig === C.railSig) return;
             C.railSig = sig;
-            var keep = rail.scrollTop;
-            var o = '<button type="button" class="rail-ico' + (C.guild === '@dm' ? ' on' : '') + '" data-g="@dm" title="Tin nhắn riêng">💬</button><div class="rail-sep"></div>';
+            var keep = rail.scrollTop, o = '';
+            if (C.me) o += '<div class="rw"><button type="button" class="rail-ico" data-g="@me" title="Hồ sơ bot"><img src="' + h(C.me.avatar) + '" alt=""></button></div>';
+            o += '<div class="rw"><button type="button" class="rail-ico' + (C.guild === '@dm' ? ' on' : '') + '" data-g="@dm" title="Tin nhắn riêng">💬</button>' + badge(unreadFor(function (u) { return !u.g; })) + '</div><div class="rail-sep"></div>';
             C.guilds.forEach(function (g) {
                 var ico = httpsOnly(g.icon) ? '<img src="' + h(g.icon) + '" alt="">' : h((g.name || '?').charAt(0).toUpperCase());
-                o += '<button type="button" class="rail-ico' + (String(g.id) === String(C.guild) ? ' on' : '') + '" data-g="' + h(g.id) + '" title="' + h(g.name) + '">' + ico + '</button>';
+                var x = unreadFor(function (u) { return u.g === String(g.id); });
+                o += '<div class="rw"><button type="button" class="rail-ico' + (String(g.id) === String(C.guild) ? ' on' : '') + '" data-g="' + h(g.id) + '" title="' + h(g.name) + '">' + ico + '</button>' + badge(x) + '</div>';
             });
             rail.innerHTML = o;
             rail.scrollTop = keep;
@@ -1371,12 +1476,38 @@ PAGE_JS = r"""
         rail.addEventListener('click', function (e) {
             var b = e.target.closest('.rail-ico'); if (!b) return;
             var g = b.getAttribute('data-g');
-            if (g === '@dm') selectDM(); else selectGuild(g);
+            if (g === '@me') { if (C.me) openProfile(C.me.id, null); }
+            else if (g === '@dm') selectDM(); else selectGuild(g);
         });
+        function loadGuilds() {
+            rpc('guilds').then(function (d) { C.me = d.me; C.fullGuilds = true; C.railSig = ''; renderRail(d.guilds); }).catch(function () {});
+        }
+        function paintChans() {
+            chans.querySelectorAll('.chan').forEach(function (b) {
+                var u = null, cid = b.getAttribute('data-id');
+                if (cid) u = C.unread[cid];
+                else if (b.hasAttribute('data-dm')) { var did = b.getAttribute('data-dm'); for (var k in C.unread) if (C.unread[k].u === did) u = C.unread[k]; }
+                b.classList.toggle('unr', !!(u && u.n));
+                var old = b.querySelector('.bdg'); if (old) old.remove();
+                if (u && u.m) { var s = document.createElement('span'); s.className = 'bdg'; s.textContent = u.m > 99 ? '99+' : u.m; b.appendChild(s); }
+            });
+        }
+        function pollUnread() {
+            if (document.hidden) return;
+            var open = (document.body.getAttribute('data-tab') === 'chat' && C.chan) ? C.chan : null;
+            rpc('unread', { open: open }).then(function (u) {
+                C.unread = u || {};
+                var tn = 0, tm = 0; for (var k in C.unread) { tn += C.unread[k].n; tm += C.unread[k].m; }
+                document.querySelector('.tab[data-tab="chat"]').textContent = '💬 Chat' + (tm ? ' (' + tm + ')' : (tn ? ' •' : ''));
+                C.railSig = ''; renderRail(); paintChans();
+            }).catch(function () {});
+        }
+        setInterval(pollUnread, 4000);
 
         function selectGuild(id, thenChan) {
             C.guild = id; C.railSig = ''; renderRail(C.guilds);
             dc.classList.remove('in-chat');
+            if (C.showMem) drawMembers(); else loadMembers(id).catch(function () {});
             var g = C.guilds.filter(function (x) { return String(x.id) === String(id); })[0];
             sideHead.textContent = g ? g.name : 'Server';
             chans.innerHTML = '<div class="dc-note">Đang tải kênh...</div>';
@@ -1398,6 +1529,7 @@ PAGE_JS = r"""
         function selectDM() {
             C.guild = '@dm'; C.railSig = ''; renderRail(C.guilds);
             dc.classList.remove('in-chat');
+            if (C.showMem) drawMembers();
             sideHead.textContent = 'Tin nhắn riêng';
             chans.innerHTML = '<div class="dm-open"><input type="text" id="dmId" placeholder="Nhập User ID để mở DM" inputmode="numeric"><button type="button" id="dmGo">Mở</button></div><div id="dmList"><div class="dc-note">Đang tải...</div></div>';
             document.getElementById('dmGo').addEventListener('click', function () { var v = document.getElementById('dmId').value.trim(); if (v) openDM(v); });
@@ -1405,7 +1537,8 @@ PAGE_JS = r"""
                 var box = document.getElementById('dmList'); if (!box) return;
                 box.innerHTML = list.length ? list.map(function (x) {
                     return '<button type="button" class="chan" data-dm="' + h(x.user.id) + '" data-name="' + h(x.user.name) + '"><img src="' + h(x.user.avatar) + '" alt=""><span class="t">' + h(x.user.name) + '</span></button>';
-                }).join('') : '<div class="dc-note">Chưa có cuộc DM nào. Nhập User ID ở trên, hoặc bấm vào tên/avatar ai đó trong chat server để mở DM.</div>';
+                }).join('') : '<div class="dc-note">Chưa có cuộc DM nào. Nhập User ID ở trên, hoặc bấm vào tên/avatar ai đó trong chat server rồi chọn Nhắn DM.</div>';
+                paintChans();
             }).catch(function (e) { var box = document.getElementById('dmList'); if (box) box.innerHTML = '<div class="dc-note">' + h(e.message) + '</div>'; });
         }
         function openDM(uid) {
@@ -1440,7 +1573,7 @@ PAGE_JS = r"""
                     if (!d.messages.length) { notify('Đã tới tin nhắn đầu tiên'); return; }
                     C.list = mergeById(d.messages, C.list); C.prepended = true; renderMsgs(false);
                 }).catch(function (er) { notify(er.message, true); });
-            } else if (act === 'dm') { openDM(t.getAttribute('data-uid')); }
+            } else if (act === 'prof') { openProfile(t.getAttribute('data-uid'), C.isDM ? null : C.guild); }
             else if (!m) { return; }
             else if (act === 'rx') toggleReact(m.id, t.getAttribute('data-emoji'), t.getAttribute('data-me') === '1');
             else if (act === 'rxadd') openPop('react', m.id);
@@ -1464,18 +1597,32 @@ PAGE_JS = r"""
             else if (e.target.id === 'dcPing' && C.reply) { C.reply.ping = !C.reply.ping; drawReply(); }
         });
 
-        /* --- picker emoji --- */
+        /* --- picker emoji (đủ bộ Unicode + emoji mọi server) --- */
+        function drawSrv(q) {
+            var grid = document.getElementById('emoGrid'); if (!grid) return;
+            q = (q || '').toLowerCase();
+            var list = (C.srvEmoji || []).filter(function (x) { return !q || x.name.toLowerCase().indexOf(q) >= 0; }).slice(0, 400);
+            grid.innerHTML = list.length ? list.map(function (x) {
+                return '<button type="button" data-e="&lt;' + (x.animated ? 'a' : '') + ':' + h(x.name) + ':' + h(x.id) + '&gt;" title=":' + h(x.name) + ': (' + h(x.guild) + ')"><img loading="lazy" src="' + h(x.url) + '" alt=""></button>';
+            }).join('') : '<div class="dc-note" style="grid-column:1/-1">Không có emoji nào.</div>';
+        }
         function popBuild() {
-            var o = '<div class="pop-tabs"><button type="button" data-t="uni" class="' + (C.popTab === 'uni' ? 'on' : '') + '">Emoji</button><button type="button" data-t="srv" class="' + (C.popTab === 'srv' ? 'on' : '') + '">Emoji server</button></div><div class="emo-grid" id="emoGrid"></div>';
+            var o = '<div class="pop-tabs">';
+            CATS.forEach(function (c, i) { o += '<button type="button" data-t="u' + i + '" class="' + (C.popTab === 'u' + i ? 'on' : '') + '" title="' + c[1] + '">' + c[0] + '</button>'; });
+            o += '<button type="button" data-t="srv" class="' + (C.popTab === 'srv' ? 'on' : '') + '">⭐ Server</button></div>' +
+                 '<input type="text" class="gif-search" id="emoQ" placeholder="Tìm emoji server..." autocomplete="off"' + (C.popTab === 'srv' ? '' : ' hidden') + '><div class="emo-grid" id="emoGrid"></div>';
             pop.innerHTML = o;
             var grid = document.getElementById('emoGrid');
-            if (C.popTab === 'uni') { grid.innerHTML = UNI.map(function (e) { return '<button type="button" data-e="' + h(e) + '">' + h(e) + '</button>'; }).join(''); return; }
-            grid.innerHTML = '<div class="dc-note" style="grid-column:1/-1">Đang tải...</div>';
-            rpc('emojis', { guild_id: C.guild && C.guild !== '@dm' ? C.guild : null }).then(function (list) {
-                grid.innerHTML = list.length ? list.map(function (x) {
-                    return '<button type="button" data-e="&lt;' + (x.animated ? 'a' : '') + ':' + h(x.name) + ':' + h(x.id) + '&gt;" title=":' + h(x.name) + ':"><img loading="lazy" src="' + h(x.url) + '" alt=""></button>';
-                }).join('') : '<div class="dc-note" style="grid-column:1/-1">Không có emoji server nào.</div>';
-            }).catch(function (e) { grid.innerHTML = '<div class="dc-note" style="grid-column:1/-1">' + h(e.message) + '</div>'; });
+            if (C.popTab === 'srv') {
+                if (C.srvEmoji) { drawSrv(''); return; }
+                grid.innerHTML = '<div class="dc-note" style="grid-column:1/-1">Đang tải...</div>';
+                rpc('emojis', {}).then(function (list) { C.srvEmoji = list; drawSrv(''); })
+                    .catch(function (e) { grid.innerHTML = '<div class="dc-note" style="grid-column:1/-1">' + h(e.message) + '</div>'; });
+                return;
+            }
+            var i = parseInt(C.popTab.slice(1), 10) || 0;
+            var arr = CAT_CACHE[i] || (CAT_CACHE[i] = rng(CATS[i][2]));
+            grid.innerHTML = arr.map(function (e) { return '<button type="button" data-e="' + h(e) + '">' + h(e) + '</button>'; }).join('');
         }
         /* --- picker GIF (Tenor/Giphy qua /api/gif) --- */
         var G = { q: '', next: '', seq: 0, timer: null };
@@ -1509,15 +1656,22 @@ PAGE_JS = r"""
                 })
                 .catch(function (e) { if (seq === G.seq) grid.innerHTML = '<div class="dc-note">' + h(e.message) + '</div>'; });
         }
+        function applyMentions(text) {
+            Object.keys(C.mentionMap).sort(function (a, b) { return b.length - a.length; }).forEach(function (n) {
+                text = text.split('@' + n).join('<@' + C.mentionMap[n] + '>');
+            });
+            return text;
+        }
         function sendGif(url) {
-            if (!C.chan || !C.canSend || C.sending) { notify('Chọn kênh có quyền gửi trước đã', true); return; }
-            C.sending = true;
-            rpc('send', { channel_id: C.chan, content: url, reply_to: C.reply ? C.reply.id : null, ping: C.reply ? C.reply.ping : true, uploads: [] })
-                .then(function () { clearReply(); closePop(); C.busy = false; return loadHist(true, true); })
+            if (!C.chan || !C.canSend) { notify('Chọn kênh có quyền gửi trước đã', true); return; }
+            var chan = C.chan, rp = C.reply; clearReply(); closePop(); C.sending++;
+            rpc('send', { channel_id: chan, content: url, reply_to: rp ? rp.id : null, ping: rp ? rp.ping : true, uploads: [] })
+                .then(function () { C.busy = false; return loadHist(true, true); })
                 .catch(function (e) { notify(e.message, true); })
-                .then(function () { C.sending = false; syncComposer(); });
+                .then(function () { C.sending--; });
         }
         pop.addEventListener('input', function (e) {
+            if (e.target.id === 'emoQ') { drawSrv(e.target.value); return; }
             if (e.target.id !== 'gifQ') return;
             clearTimeout(G.timer);
             var v = e.target.value.trim();
@@ -1576,22 +1730,24 @@ PAGE_JS = r"""
         }
         function autosize() { ta.style.height = 'auto'; ta.style.height = Math.min(150, ta.scrollHeight) + 'px'; }
         function send() {
-            if (!C.chan || !C.canSend || C.sending) return;
+            if (!C.chan || !C.canSend) return;
             var text = ta.value.trim();
             if (!text && !C.pending.length) return;
-            C.sending = true; sendBtn.disabled = true;
-            var files = C.pending.slice();
+            var files = C.pending.slice(), rp = C.reply, chan = C.chan, out = applyMentions(text);
+            ta.value = ''; autosize(); C.pending = []; renderFiles(); clearReply(); acHide(); ta.focus();   /* xóa ô chat NGAY để gõ tiếp */
+            C.sending++;
             uploadAll(files).then(function (ids) {
-                return rpc('send', { channel_id: C.chan, content: text, reply_to: C.reply ? C.reply.id : null, ping: C.reply ? C.reply.ping : true, uploads: ids });
-            }).then(function () {
-                ta.value = ''; autosize(); C.pending = []; renderFiles(); clearReply();
-                C.busy = false; return loadHist(true, true);
-            }).catch(function (e) { notify(e.message, true); })
-              .then(function () { C.sending = false; syncComposer(); });
+                return rpc('send', { channel_id: chan, content: out, reply_to: rp ? rp.id : null, ping: rp ? rp.ping : true, uploads: ids });
+            }).then(function () { C.busy = false; return loadHist(true, true); })
+              .catch(function (e) { notify(e.message, true); if (!ta.value) { ta.value = text; autosize(); } })  /* lỗi thì trả chữ lại */
+              .then(function () { C.sending--; });
         }
         sendBtn.addEventListener('click', send);
         ta.addEventListener('input', autosize);
-        ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+        ta.addEventListener('keydown', function (e) {
+            if (acKey(e)) return;
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+        });
 
         /* --- nút KHÓA: khóa cuộn cả trang khi ở tab Chat, chỉ cuộn trong 3 cột --- */
         var lockBtn = document.getElementById('dcLock');
@@ -1619,10 +1775,133 @@ PAGE_JS = r"""
             loadHist(!(C.tick % 6 === 0 && C.list.length <= 100));
         }, 2500);
 
-        onGuildList = renderRail;
+        /* --- danh sách thành viên --- */
+        function loadMembers(gid) {
+            if (!gid || gid === '@dm') return Promise.resolve([]);
+            var c = C.members[gid];
+            if (c && Date.now() - c.t < 120000) return Promise.resolve(c.d);
+            return rpc('members', { guild_id: gid }).then(function (d) { C.members[gid] = { t: Date.now(), d: d }; return d; });
+        }
+        function drawMembers() {
+            var box = document.getElementById('dcMembers');
+            if (!C.guild || C.guild === '@dm') { box.innerHTML = '<div class="dc-note">DM không có danh sách thành viên.</div>'; return; }
+            var g = C.guild;
+            box.innerHTML = '<div class="dc-note">Đang tải...</div>';
+            loadMembers(g).then(function (list) {
+                if (C.guild !== g || !C.showMem) return;
+                var on = list.filter(function (u) { return u.status && u.status !== 'offline'; });
+                var off = list.filter(function (u) { return !(u.status && u.status !== 'offline'); });
+                function row(u, cls) {
+                    return '<button type="button" class="mem' + cls + '" data-uid="' + h(u.id) + '"><span class="mav"><img loading="lazy" src="' + h(u.avatar) + '" alt=""><i class="st s-' + h(u.status) + '"></i></span>' +
+                        '<span class="mn"' + (u.color ? ' style="color:#' + ('000000' + u.color.toString(16)).slice(-6) + '"' : '') + '>' + h(u.name) + '</span>' + (u.bot ? '<span class="tag">BOT</span>' : '') + '</button>';
+                }
+                var o = '';
+                if (on.length) o += '<div class="grp">Online — ' + on.length + '</div>' + on.map(function (u) { return row(u, ''); }).join('');
+                if (off.length) o += '<div class="grp">' + (on.length ? 'Offline' : 'Thành viên') + ' — ' + off.length + '</div>' + off.slice(0, 250).map(function (u) { return row(u, on.length ? ' off' : ''); }).join('');
+                if (list.length < 5) o += '<div class="dc-note">Bot chỉ thấy ít thành viên: cần bật Members/Presence Intent trong bot.py và Developer Portal.</div>';
+                box.innerHTML = o;
+            }).catch(function (e) { box.innerHTML = '<div class="dc-note">' + h(e.message) + '</div>'; });
+        }
+        document.getElementById('dcMemBtn').addEventListener('click', function () {
+            C.showMem = !C.showMem; dc.classList.toggle('show-mem', C.showMem);
+            if (C.showMem) drawMembers();
+        });
+        document.getElementById('dcMembers').addEventListener('click', function (e) {
+            var b = e.target.closest('.mem'); if (b) openProfile(b.getAttribute('data-uid'), C.guild);
+        });
+
+        /* --- profile --- */
+        function dfmt(ts) { return ts ? new Date(ts * 1000).toLocaleDateString('vi-VN') : '—'; }
+        var STL = { online: 'Trực tuyến', idle: 'Chờ', dnd: 'Đừng làm phiền', offline: 'Ngoại tuyến' };
+        function copyText(s) {
+            if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(s).then(function () { notify('Đã copy ' + s); }); return; }
+            var t = document.createElement('textarea'); t.value = s; document.body.appendChild(t); t.select();
+            try { document.execCommand('copy'); notify('Đã copy ' + s); } catch (e) {}
+            t.remove();
+        }
+        function insertAtCursor(txt) {
+            var s = ta.selectionStart == null ? ta.value.length : ta.selectionStart, e2 = ta.selectionEnd == null ? s : ta.selectionEnd;
+            ta.value = ta.value.slice(0, s) + txt + ta.value.slice(e2); ta.focus(); ta.setSelectionRange(s + txt.length, s + txt.length); autosize();
+        }
+        function openProfile(uid, gid) {
+            var box = document.getElementById('dcProf'); box.hidden = false;
+            box.innerHTML = '<div class="prof"><div class="dc-note">Đang tải...</div></div>';
+            rpc('profile', { user_id: uid, guild_id: gid && gid !== '@dm' ? gid : null }).then(function (p) {
+                C.prof = p;
+                var ban = httpsOnly(p.banner) ? 'background-image:url(&quot;' + h(p.banner) + '&quot;)' : (p.accent != null ? 'background:#' + ('000000' + p.accent.toString(16)).slice(-6) : '');
+                var roles = (p.roles || []).map(function (r) {
+                    return '<span class="role"><i' + (r.color ? ' style="background:#' + ('000000' + r.color.toString(16)).slice(-6) + '"' : '') + '></i>' + h(r.name) + '</span>';
+                }).join('');
+                box.innerHTML = '<div class="prof"><div class="pb" style="' + ban + '"></div><div class="pbody">' +
+                    '<img class="pav" src="' + h(p.avatar) + '" alt="">' +
+                    '<h3>' + h(p.name) + (p.bot ? '<span class="tag">BOT</span>' : '') + '</h3><div class="un">' + h(p.username) + '</div>' +
+                    '<div class="box"><b>ID người dùng</b><code>' + h(p.id) + '</code>' +
+                    (p.status ? '<b>Trạng thái</b>' + h(STL[p.status] || p.status) : '') +
+                    '<b>Tạo tài khoản</b>' + dfmt(p.created) + (p.joined ? '<b>Vào server</b>' + dfmt(p.joined) : '') +
+                    (roles ? '<b>Vai trò</b>' + roles : '') + '</div>' +
+                    '<div class="pbtns"><button type="button" class="pbtn pri" data-p="dm">💬 Nhắn DM</button><button type="button" class="pbtn" data-p="copy">📋 Copy ID</button><button type="button" class="pbtn" data-p="mention">@ Mention</button><button type="button" class="pbtn" data-p="close">Đóng</button></div></div></div>';
+            }).catch(function (e) {
+                box.innerHTML = '<div class="prof"><div class="dc-note">' + h(e.message) + '</div><div class="pbtns" style="padding:0 16px 16px"><button type="button" class="pbtn" data-p="close">Đóng</button></div></div>';
+            });
+        }
+        document.getElementById('dcProf').addEventListener('click', function (e) {
+            var box = this, b = e.target.closest('[data-p]');
+            if (e.target === box || (b && b.getAttribute('data-p') === 'close')) { box.hidden = true; return; }
+            if (!b || !C.prof) return;
+            var a = b.getAttribute('data-p');
+            if (a === 'copy') copyText(C.prof.id);
+            else if (a === 'dm') { box.hidden = true; if (C.prof.bot) notify('Bot không DM được bot khác', true); else openDM(C.prof.id); }
+            else if (a === 'mention') { box.hidden = true; C.mentionMap[C.prof.name] = C.prof.id; insertAtCursor('@' + C.prof.name + ' '); }
+        });
+
+        /* --- gõ @ để chọn người ping --- */
+        var AC = { items: [], sel: 0, start: -1 }, acBox = document.getElementById('dcAc');
+        function acHide() { acBox.hidden = true; AC.items = []; }
+        function acDraw() {
+            acBox.innerHTML = AC.items.map(function (u, i) {
+                return '<button type="button" data-i="' + i + '" class="' + (i === AC.sel ? 'on' : '') + '">' + (u.avatar ? '<img src="' + h(u.avatar) + '" alt="">' : '<span class="ai">@</span>') + '<b>' + h(u.name) + '</b>' + (u.desc ? '<small>' + h(u.desc) + '</small>' : '') + '</button>';
+            }).join('');
+            acBox.hidden = !AC.items.length;
+        }
+        function acCheck() {
+            var pos = ta.selectionStart, m = /(^|\s)@([^\s@]{0,32})$/.exec(ta.value.slice(0, pos));
+            if (!m || !C.chan || C.isDM) { acHide(); return; }
+            var q = m[2].toLowerCase(); AC.start = pos - m[2].length - 1;
+            var c = C.members[C.guild];
+            if (!c) loadMembers(C.guild).then(acCheck).catch(function () {});
+            var items = [];
+            [['everyone', 'Ping tất cả'], ['here', 'Ping người online']].forEach(function (s) { if (s[0].indexOf(q) === 0) items.push({ name: s[0], desc: s[1], special: true }); });
+            var hits = (c ? c.d : []).filter(function (u) { return u.name.toLowerCase().indexOf(q) >= 0; });
+            hits.sort(function (a, b) { return (b.name.toLowerCase().indexOf(q) === 0) - (a.name.toLowerCase().indexOf(q) === 0); });
+            AC.items = items.concat(hits).slice(0, 10); AC.sel = 0; acDraw();
+        }
+        function acPick(i) {
+            var u = AC.items[i]; if (!u) return;
+            var pos = ta.selectionStart, ins = '@' + u.name + ' ';
+            if (!u.special) C.mentionMap[u.name] = u.id;
+            ta.value = ta.value.slice(0, AC.start) + ins + ta.value.slice(pos);
+            var np = AC.start + ins.length; ta.focus(); ta.setSelectionRange(np, np); acHide(); autosize();
+        }
+        function acKey(e) {
+            if (acBox.hidden || e.isComposing) return false;
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { AC.sel = (AC.sel + (e.key === 'ArrowDown' ? 1 : AC.items.length - 1)) % AC.items.length; acDraw(); e.preventDefault(); return true; }
+            if (e.key === 'Enter' || e.key === 'Tab') { acPick(AC.sel); e.preventDefault(); return true; }
+            if (e.key === 'Escape') { acHide(); return true; }
+            return false;
+        }
+        acBox.addEventListener('mousedown', function (e) { var b = e.target.closest('button'); if (b) { e.preventDefault(); acPick(+b.getAttribute('data-i')); } });
+        ta.addEventListener('input', acCheck); ta.addEventListener('click', acCheck);
+
+        /* --- nút "Có tin nhắn mới" --- */
+        var newBar = document.getElementById('dcNew');
+        msgs.addEventListener('scroll', function () { if (nearBottom()) newBar.hidden = true; });
+        newBar.addEventListener('click', function () { msgs.scrollTop = msgs.scrollHeight; newBar.hidden = true; });
+
+        onGuildList = function (l) { if (!C.fullGuilds) renderRail(l); };
         syncComposer();
         window.__chatShow = function () {
-            renderRail(liveStats.guild_list || C.guilds);
+            if (!C.fullGuilds) { loadGuilds(); renderRail(liveStats.guild_list || C.guilds); }
+            pollUnread();
             if (C.guild) return;
             var last = loadLast();
             if (last.d && last.c) { selectDM(); openDM_last(last); }
@@ -1674,10 +1953,13 @@ CHAT_BLOCK = """
             <button type="button" class="dc-back" id="dcBack" aria-label="Quay lại">‹</button>
             <span id="dcTitle" class="dim">Chọn một kênh để bắt đầu</span>
             <span class="dc-bot" title="Bạn đang chat bằng tên bot này"><span class="dc-bot-ico" id="dcBotIco">🤖</span><span id="dcBotName">Bot</span></span>
+            <button type="button" class="lock-btn" id="dcMemBtn" title="Danh sách thành viên">👥</button>
             <button type="button" class="lock-btn" id="dcLock" aria-label="Khóa cuộn trang">🔒</button>
         </div>
         <div class="dc-msgs" id="dcMsgs"><div class="dc-empty">Chưa chọn kênh nào</div></div>
+        <button type="button" class="dc-new" id="dcNew" hidden>⬇ Có tin nhắn mới</button>
         <div class="dc-comp">
+            <div class="dc-ac" id="dcAc" hidden></div>
             <div class="dc-reply" id="dcReply" hidden></div>
             <div class="dc-files" id="dcFiles"></div>
             <div class="cbox">
@@ -1690,7 +1972,9 @@ CHAT_BLOCK = """
             <input type="file" id="dcFile" multiple hidden>
             <div class="dc-pop" id="dcPop"></div>
         </div>
+        <div class="dc-modal" id="dcProf" hidden></div>
     </div>
+    <aside class="dc-members" id="dcMembers"></aside>
 </section>
 """
 
