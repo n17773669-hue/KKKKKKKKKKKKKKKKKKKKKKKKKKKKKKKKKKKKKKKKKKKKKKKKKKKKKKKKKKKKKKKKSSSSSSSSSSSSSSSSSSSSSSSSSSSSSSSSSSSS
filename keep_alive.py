@@ -1,5 +1,6 @@
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import urllib.parse
+import urllib.request
 import threading
 import subprocess
 import datetime
@@ -231,6 +232,79 @@ def cleanup_uploads():
                 os.remove(p)
     except OSError:
         pass
+
+
+# ----------------------------------------------------------------------
+# Kho GIF (Tenor hoặc Giphy). Cần 1 trong 2 biến môi trường:
+#   TENOR_API_KEY  (Google Cloud > Tenor API)  hoặc  GIPHY_API_KEY (developers.giphy.com)
+# Không có key thì nút GIF chỉ hiện hướng dẫn; vẫn gửi GIF bằng cách dán link / tải file .gif.
+# ----------------------------------------------------------------------
+TENOR_KEY = os.environ.get("TENOR_API_KEY", "").strip()
+GIPHY_KEY = os.environ.get("GIPHY_API_KEY", "").strip()
+GIF_CACHE = {}
+GIF_CACHE_LOCK = threading.Lock()
+
+
+def _http_json(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "ksbot-dashboard/1.0"})
+    with urllib.request.urlopen(req, timeout=8) as r:
+        return json.loads(r.read(2_000_000).decode("utf-8", "replace"))
+
+
+def gif_search(q, pos):
+    """Trả (data, lỗi). lỗi == 'no_key' nghĩa là chưa cấu hình key."""
+    if not TENOR_KEY and not GIPHY_KEY:
+        return None, "no_key"
+    q = (q or "").strip()[:60]
+    pos = re.sub(r"[^0-9A-Za-z_.\-]", "", str(pos or ""))[:60]
+    ck = (q, pos)
+    now = time.time()
+    with GIF_CACHE_LOCK:
+        hit = GIF_CACHE.get(ck)
+        if hit and now - hit[0] < 300:
+            return hit[1], None
+    items = []
+    nxt = ""
+    try:
+        if TENOR_KEY:
+            params = {"key": TENOR_KEY, "client_key": "ksbot", "limit": 24,
+                      "media_filter": "tinygif,gif", "contentfilter": "medium"}
+            if pos:
+                params["pos"] = pos
+            if q:
+                params["q"] = q
+            url = "https://tenor.googleapis.com/v2/%s?%s" % ("search" if q else "featured", urllib.parse.urlencode(params))
+            raw = _http_json(url)
+            for r in raw.get("results") or []:
+                mf = r.get("media_formats") or {}
+                prev = (mf.get("tinygif") or mf.get("gif") or {}).get("url")
+                link = r.get("itemurl") or (mf.get("gif") or {}).get("url")
+                if prev and link:
+                    items.append({"id": str(r.get("id")), "preview": prev, "url": link})
+            nxt = raw.get("next") or ""
+        else:
+            offset = int(pos) if pos.isdigit() else 0
+            params = {"api_key": GIPHY_KEY, "limit": 24, "offset": offset, "rating": "pg-13"}
+            if q:
+                params["q"] = q
+            url = "https://api.giphy.com/v1/gifs/%s?%s" % ("search" if q else "trending", urllib.parse.urlencode(params))
+            raw = _http_json(url)
+            for r in raw.get("data") or []:
+                im = r.get("images") or {}
+                prev = (im.get("fixed_width_small") or im.get("fixed_width") or {}).get("url")
+                link = r.get("url")
+                if prev and link:
+                    items.append({"id": str(r.get("id")), "preview": prev, "url": link})
+            nxt = str(offset + len(items)) if len(items) >= 24 else ""
+    except Exception as e:
+        return None, "Không tải được GIF: %s" % str(e)[:80]
+    items = [i for i in items if i["preview"].startswith("https://") and i["url"].startswith("https://")]
+    data = {"items": items, "next": nxt}
+    with GIF_CACHE_LOCK:
+        if len(GIF_CACHE) > 200:
+            GIF_CACHE.clear()
+        GIF_CACHE[ck] = (now, data)
+    return data, None
 
 
 # ----------------------------------------------------------------------
@@ -730,6 +804,17 @@ body.has-bg .card { background: rgba(21,25,35,.78); -webkit-backdrop-filter: blu
 .lock-btn { background: #2b2d31; border: 0; border-radius: 8px; padding: 5px 10px; cursor: pointer; color: #dbdee1; font-size: 14px; flex: none; }
 .lock-btn:hover { background: #3a3c42; }
 .lock-btn.on { background: var(--accent); color: var(--accent-ink); }
+/* GIF */
+.cbox #dcGif { font-size: 12px; font-weight: 800; border: 2px solid currentColor; border-radius: 6px; padding: 1px 6px; margin: 9px 4px; line-height: 1.5; }
+.dc-pop.wide { width: 420px; max-height: 440px; }
+.gif-search { width: 100%; background: #1e1f22; border: 0; border-radius: 6px; padding: 9px 11px; color: #dbdee1; font-size: 14px; outline: none; margin-bottom: 8px; }
+.gif-grid { columns: 2; column-gap: 6px; }
+.gif-grid button { display: block; width: 100%; margin: 0 0 6px; padding: 0; border: 0; background: #1e1f22; border-radius: 6px; overflow: hidden; cursor: pointer; break-inside: avoid; }
+.gif-grid button:hover { outline: 2px solid #5865f2; }
+.gif-grid img { width: 100%; display: block; }
+.gif-more { display: block; margin: 8px auto 0; background: #1e1f22; border: 0; border-radius: 8px; color: #b5bac1; padding: 7px 16px; cursor: pointer; font-size: 13px; }
+.gif-more:hover { color: #fff; }
+.emb video.gifv, .att video.gifv { max-width: 100%; max-height: 320px; border-radius: 6px; margin-top: 8px; display: block; }
 html.chat-lock, html.chat-lock body { overflow: hidden; }
 html.chat-lock .wrap { padding-bottom: 0; }
 html.chat-lock .dc { height: calc(100vh - 150px); }
@@ -1171,7 +1256,8 @@ PAGE_JS = r"""
             if (e.title) o += '<div class="et">' + (e.url ? '<a href="' + h(httpsOnly(e.url)) + '" target="_blank" rel="noopener noreferrer">' + h(e.title) + '</a>' : h(e.title)) + '</div>';
             if (e.description) o += '<div class="ed2">' + fmt(e.description) + '</div>';
             (e.fields || []).forEach(function (f) { o += '<div class="ef"><b>' + h(f.name) + '</b>' + fmt(f.value) + '</div>'; });
-            if (httpsOnly(e.image)) o += '<img class="big" loading="lazy" src="' + h(e.image) + '" alt="">';
+            if (e.video && httpsOnly(e.video)) o += '<video class="gifv" autoplay loop muted playsinline preload="metadata" src="' + h(e.video) + '"></video>';
+            else if (httpsOnly(e.image)) o += '<img class="big" loading="lazy" src="' + h(e.image) + '" alt="">';
             else if (httpsOnly(e.thumb)) o += '<img class="big" loading="lazy" src="' + h(e.thumb) + '" alt="">';
             if (e.footer) o += '<div class="ft">' + h(e.footer) + '</div>';
             return o + '</div>';
@@ -1185,7 +1271,8 @@ PAGE_JS = r"""
             o += '<div class="body">';
             if (m.reply) o += '<div class="rep">↪ <b>' + h(m.reply.author || '?') + '</b> ' + h(m.reply.content || '(tin nhắn gốc)') + '</div>';
             if (!grp) o += '<div class="head"><span class="nm" data-act="dm" data-uid="' + h(m.author.id) + '">' + h(m.author.name) + '</span>' + (m.author.bot ? '<span class="tag">BOT</span>' : '') + '<span class="ts">' + tfmt(m.ts) + '</span></div>';
-            if (m.content) o += '<div class="txt">' + fmt(m.content) + (m.edited ? ' <span class="ed">(đã sửa)</span>' : '') + '</div>';
+            var gifOnly = (m.embeds || []).length && /^https?:\/\/\S*(tenor|giphy)\.com\S*$/i.test((m.content || '').trim());
+            if (m.content && !gifOnly) o += '<div class="txt">' + fmt(m.content) + (m.edited ? ' <span class="ed">(đã sửa)</span>' : '') + '</div>';
             (m.atts || []).forEach(function (a) {
                 var u = h(httpsOnly(a.url));
                 if (/^image\//.test(a.type)) o += '<div class="att"><a href="' + u + '" target="_blank" rel="noopener noreferrer"><img loading="lazy" src="' + u + '" alt=""></a></div>';
@@ -1249,6 +1336,7 @@ PAGE_JS = r"""
         function syncComposer() {
             ta.disabled = !C.chan || !C.canSend;
             sendBtn.disabled = ta.disabled;
+            document.getElementById('dcGif').disabled = ta.disabled;
             ta.placeholder = !C.chan ? 'Chọn kênh để chat' : (C.canSend ? 'Nhắn vào ' + (C.isDM ? '@' : '#') + C.name + ' bằng tên bot' : 'Bot không có quyền gửi tin ở kênh này');
         }
 
@@ -1389,17 +1477,70 @@ PAGE_JS = r"""
                 }).join('') : '<div class="dc-note" style="grid-column:1/-1">Không có emoji server nào.</div>';
             }).catch(function (e) { grid.innerHTML = '<div class="dc-note" style="grid-column:1/-1">' + h(e.message) + '</div>'; });
         }
-        function openPop(mode, msgId) { C.popMode = mode; C.popMsg = msgId || null; pop.classList.add('show'); popBuild(); }
+        /* --- picker GIF (Tenor/Giphy qua /api/gif) --- */
+        var G = { q: '', next: '', seq: 0, timer: null };
+        function popGif() {
+            pop.innerHTML = '<input type="text" class="gif-search" id="gifQ" placeholder="Tìm GIF..." autocomplete="off"><div class="gif-grid" id="gifGrid"></div><button type="button" class="gif-more" id="gifMore" hidden>Xem thêm</button>';
+            G.q = ''; G.next = '';
+            loadGifs(false);
+            var qi = document.getElementById('gifQ'); if (qi) qi.focus();
+        }
+        function loadGifs(more) {
+            var grid = document.getElementById('gifGrid'), moreBtn = document.getElementById('gifMore');
+            if (!grid) return;
+            var seq = ++G.seq;
+            if (!more) grid.innerHTML = '<div class="dc-note">Đang tải GIF...</div>';
+            authFetch('/api/gif?q=' + encodeURIComponent(G.q) + (more && G.next ? '&pos=' + encodeURIComponent(G.next) : ''), { cache: 'no-store' })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (seq !== G.seq) return;
+                    if (d.no_key) {
+                        grid.innerHTML = '<div class="dc-note">Chưa bật kho GIF. Thêm biến <b>TENOR_API_KEY</b> hoặc <b>GIPHY_API_KEY</b> vào Môi trường rồi khởi động lại. Hoặc dán link GIF thẳng vào ô chat, hoặc bấm ＋ để tải file .gif lên.</div>';
+                        moreBtn.hidden = true; return;
+                    }
+                    if (!d.ok) throw new Error(d.error || 'Lỗi tải GIF');
+                    var o = d.items.map(function (g) {
+                        return '<button type="button" data-gif="' + h(g.url) + '"><img loading="lazy" src="' + h(g.preview) + '" alt=""></button>';
+                    }).join('');
+                    if (more) grid.insertAdjacentHTML('beforeend', o);
+                    else grid.innerHTML = o || '<div class="dc-note">Không tìm thấy GIF nào.</div>';
+                    G.next = d.next || '';
+                    moreBtn.hidden = !G.next;
+                })
+                .catch(function (e) { if (seq === G.seq) grid.innerHTML = '<div class="dc-note">' + h(e.message) + '</div>'; });
+        }
+        function sendGif(url) {
+            if (!C.chan || !C.canSend || C.sending) { notify('Chọn kênh có quyền gửi trước đã', true); return; }
+            C.sending = true;
+            rpc('send', { channel_id: C.chan, content: url, reply_to: C.reply ? C.reply.id : null, ping: C.reply ? C.reply.ping : true, uploads: [] })
+                .then(function () { clearReply(); closePop(); C.busy = false; return loadHist(true, true); })
+                .catch(function (e) { notify(e.message, true); })
+                .then(function () { C.sending = false; syncComposer(); });
+        }
+        pop.addEventListener('input', function (e) {
+            if (e.target.id !== 'gifQ') return;
+            clearTimeout(G.timer);
+            var v = e.target.value.trim();
+            G.timer = setTimeout(function () { G.q = v; G.next = ''; loadGifs(false); }, 400);
+        });
+        function openPop(mode, msgId) {
+            C.popMode = mode; C.popMsg = msgId || null;
+            pop.classList.add('show'); pop.classList.toggle('wide', mode === 'gif');
+            if (mode === 'gif') popGif(); else popBuild();
+        }
         function closePop() { pop.classList.remove('show'); }
         pop.addEventListener('click', function (e) {
             e.stopPropagation();
             var t = e.target.closest('button'); if (!t) return;
+            if (t.id === 'gifMore') { loadGifs(true); return; }
+            if (t.hasAttribute('data-gif')) { sendGif(t.getAttribute('data-gif')); return; }
             if (t.hasAttribute('data-t')) { C.popTab = t.getAttribute('data-t'); popBuild(); return; }
             var raw = t.getAttribute('data-e'); if (!raw) return;
             var emoji = raw.replace(/&lt;/g, '<').replace(/&gt;/g, '>');
             if (C.popMode === 'react') { toggleReact(C.popMsg, emoji, false); closePop(); }
             else { var s = ta.selectionStart || ta.value.length; ta.value = ta.value.slice(0, s) + emoji + ta.value.slice(ta.selectionEnd || s); ta.focus(); ta.setSelectionRange(s + emoji.length, s + emoji.length); }
         });
+        document.getElementById('dcGif').addEventListener('click', function (e) { e.stopPropagation(); if (pop.classList.contains('show') && C.popMode === 'gif') closePop(); else openPop('gif'); });
         document.getElementById('dcEmoji').addEventListener('click', function (e) { e.stopPropagation(); if (pop.classList.contains('show') && C.popMode === 'compose') closePop(); else openPop('compose'); });
         document.addEventListener('click', function (e) { if (!pop.contains(e.target)) closePop(); });
 
@@ -1542,6 +1683,7 @@ CHAT_BLOCK = """
             <div class="cbox">
                 <button type="button" id="dcAttach" title="Đính kèm file (hoặc kéo thả / dán ảnh)">＋</button>
                 <textarea id="dcInput" rows="1" placeholder="Chọn kênh để chat" disabled></textarea>
+                <button type="button" id="dcGif" title="Gửi GIF" disabled>GIF</button>
                 <button type="button" id="dcEmoji" title="Emoji">😊</button>
                 <button type="button" id="dcSend" title="Gửi" disabled>➤</button>
             </div>
@@ -1982,6 +2124,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json(401, {"ok": False, "error": "Chưa đăng nhập"})
             else:
                 self._send(401, render_login())
+            return
+        if path == "/api/gif":
+            if not CHAT_ENABLED:
+                self._json(403, {"ok": False, "error": "Chat đang khóa"})
+                return
+            qs = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            data, err = gif_search(qs.get("q", [""])[0], qs.get("pos", [""])[0])
+            if err == "no_key":
+                self._json(200, {"ok": True, "no_key": True, "items": [], "next": ""})
+            elif err:
+                self._json(200, {"ok": False, "error": err})
+            else:
+                self._json(200, dict(data, ok=True))
             return
         if path in API_GET:
             payload = {"/stats": read_stats, "/activity": read_activity, "/botctl": bot_status, "/uptime": read_uptime}[path]()
