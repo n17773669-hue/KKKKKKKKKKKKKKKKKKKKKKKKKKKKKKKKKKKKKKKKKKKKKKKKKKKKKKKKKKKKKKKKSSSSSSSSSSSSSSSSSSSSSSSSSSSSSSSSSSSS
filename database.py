@@ -41,10 +41,13 @@ STORAGE_GUILD_ID = 1542062093908312074
 PROTECTED_CHANNEL_ID = 1542062252897865802   # KHÔNG BAO GIỜ đụng tới kênh này
 
 DB_PATH = "ksbot_master.db"
+WORDS_DB = os.getenv("NOITU_DB", "noitu_words.db")   # database của noitu.py
+NOITU_KEEP_TABLES = ("noitu_settings", "vtv_settings", "noitu_stats")  # kho từ tự tải lại online nên không backup
 STATS_FILE = "command_stats.json"
 LOG_FILE = "command_log.jsonl"
 COIN_LOG_FILE = "coin_log.jsonl"
 UPTIME_FILE = "uptime.json"
+STATE_FILE = "runtime_state.json"
 
 DATA_TOPIC = "KSBOT-DATA-STORE"
 INDEX_NAME = "ksbot-index"
@@ -67,9 +70,11 @@ CATS = {
     "cmdlog":  {"channel": "ksbot-cmdlog",  "interval": 600, "label": "Nhật ký lệnh"},
     "coinlog": {"channel": "ksbot-coinlog", "interval": 600, "label": "Nhật ký coin"},
     "uptime":  {"channel": "ksbot-uptime",  "interval": 600, "label": "Thời gian bot online"},
+    "noitu":   {"channel": "ksbot-noitu",   "interval": 300, "label": "Nối Từ + Vua TV (kênh cài đặt, điểm)"},
+    "state":   {"channel": "ksbot-state",   "interval": 120, "label": "Trạng thái đang chạy (AFK, lì xì, daily...)"},
 }
 
-OWN_JSON = {STATS_FILE, UPTIME_FILE}
+OWN_JSON = {STATS_FILE, UPTIME_FILE, STATE_FILE}
 JSON_DENY = {"stats.json", "activity.json", "outbox.json", "package.json",
              "package-lock.json", "tsconfig.json"}
 
@@ -130,6 +135,10 @@ def _files_for(cat, db_path):
         return [COIN_LOG_FILE] if os.path.exists(COIN_LOG_FILE) else []
     if cat == "uptime":
         return [UPTIME_FILE] if os.path.exists(UPTIME_FILE) else []
+    if cat == "state":
+        return [STATE_FILE] if os.path.exists(STATE_FILE) else []
+    if cat == "noitu":
+        return [WORDS_DB] if os.path.exists(WORDS_DB) else []
     return []
 
 
@@ -146,9 +155,13 @@ def _restorable(cat, name, db_path):
         return name == COIN_LOG_FILE
     if cat == "uptime":
         return name == UPTIME_FILE
+    if cat == "state":
+        return name == STATE_FILE
+    if cat == "noitu":
+        return name == os.path.basename(WORDS_DB)
     if cat == "legacy":
         return (name == os.path.basename(db_path) or _json_ok(name)
-                or name in (STATS_FILE, LOG_FILE, COIN_LOG_FILE, UPTIME_FILE))
+                or name in (STATS_FILE, LOG_FILE, COIN_LOG_FILE, UPTIME_FILE, STATE_FILE))
     return False
 
 
@@ -158,9 +171,31 @@ def _fingerprint(cat, db_path):
         try:
             st = os.stat(p)
             out.append((p, st.st_mtime, st.st_size))
+            if cat == "noitu" and os.path.exists(p + "-wal"):
+                w = os.stat(p + "-wal")
+                out.append((p + "-wal", w.st_mtime, w.st_size))
         except OSError:
             out.append((p, 0, 0))
     return tuple(out)
+
+
+def _noitu_snapshot(src_path, dest_path):
+    """Chỉ chép các bảng nhỏ (cài đặt kênh + điểm), bỏ kho từ vài chục MB vì bot tự tải lại online."""
+    src = sqlite3.connect(src_path, timeout=30)
+    dst = sqlite3.connect(dest_path)
+    try:
+        for t in NOITU_KEEP_TABLES:
+            row = src.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (t,)).fetchone()
+            if not row or not row[0]:
+                continue
+            dst.execute(row[0])
+            rows = src.execute(f"SELECT * FROM {t}").fetchall()
+            if rows:
+                dst.executemany(f"INSERT INTO {t} VALUES ({','.join('?' * len(rows[0]))})", rows)
+        dst.commit()
+    finally:
+        src.close()
+        dst.close()
 
 
 def _build_archive(cat, db_path):
@@ -181,6 +216,10 @@ def _build_archive(cat, db_path):
                         src.backup(dst)
                     src.close()
                     dst.close()
+                    tar.add(snap, arcname=arc)
+                elif cat == "noitu":
+                    snap = os.path.join(tmp_dir, arc)
+                    _noitu_snapshot(path, snap)
                     tar.add(snap, arcname=arc)
                 else:
                     tar.add(path, arcname=arc)
@@ -269,6 +308,141 @@ class Uptime:
 
 
 UPTIME = Uptime()
+
+# ---------------------------------------------------------------- trạng thái trong bộ nhớ
+# Tên biến của bot.py cần lưu. Biến của extension khác viết dạng "tenfile.TEN_BIEN"
+# (ví dụ "fun.TREO_VOICE") — thêm vào đây là được lưu + khôi phục.
+STATE_VARS = [
+    "AFK_USERS",              # ai đang AFK + nick cũ
+    "DIEM_DANH_TRACKER",      # thời gian chờ .daily
+    "BOT_BLOCKED_CHANNELS",   # kênh bị .blockbot
+    "LIXI_CLAIMED",           # ai đã nhận lì xì đợt hiện tại
+    "LIXI_ACTIVE_EVENT",      # đợt lì xì đang hiệu lực
+    "LIXI_EVENT_COUNTER",     # số thứ tự đợt lì xì
+    "WILD_NEXT_SPAWN",        # giờ thú hoang xuất hiện tiếp theo
+    "ACTIVE_WILD_PETS",       # thú hoang đang xuất hiện
+]
+_state_raw = {}
+_state_ready = False
+_state_last = ""
+_bot_mod = None
+
+
+def _enc(v):
+    if isinstance(v, dict):
+        return {"__d": [[_enc(k), _enc(x)] for k, x in v.items()]}
+    if isinstance(v, (set, frozenset)):
+        return {"__s": [_enc(x) for x in v]}
+    if isinstance(v, (list, tuple)):
+        return [_enc(x) for x in v]
+    if v is None or isinstance(v, (bool, int, float, str)):
+        return v
+    return None                      # kiểu không lưu được (object Discord...) -> bỏ qua
+
+
+def _dec(v):
+    if isinstance(v, dict):
+        if "__d" in v:
+            return {_dec(k): _dec(x) for k, x in v["__d"]}
+        if "__s" in v:
+            return {_dec(x) for x in v["__s"]}
+    if isinstance(v, list):
+        return [_dec(x) for x in v]
+    return v
+
+
+def _bot_module():
+    global _bot_mod
+    if _bot_mod is not None:
+        return _bot_mod
+    for mod in list(sys.modules.values()):
+        try:
+            if hasattr(mod, "update_user_full") and hasattr(mod, "ALL_PETS"):
+                _bot_mod = mod
+                return mod
+        except Exception:
+            continue
+    return None
+
+
+def _find_var(entry):
+    if "." in entry:
+        modname, var = entry.rsplit(".", 1)
+        for key in (modname, "cogs." + modname):
+            m = sys.modules.get(key)
+            if m is not None:
+                return m, var
+        return None, var
+    return _bot_module(), entry
+
+
+def _load_state_file():
+    global _state_raw
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        _state_raw = data if isinstance(data, dict) else {}
+    except Exception:
+        _state_raw = {}
+
+
+def _apply_state():
+    """Đổ dữ liệu đã lưu ngược vào biến của bot (gộp, không xóa thứ đang có)."""
+    for entry in STATE_VARS:
+        if entry not in _state_raw:
+            continue
+        mod, var = _find_var(entry)
+        if mod is None or not hasattr(mod, var):
+            continue
+        try:
+            val = _dec(_state_raw[entry])
+            cur = getattr(mod, var)
+            if isinstance(cur, dict) and isinstance(val, dict):
+                for k, v in val.items():
+                    if isinstance(v, set) and isinstance(cur.get(k), set):
+                        cur[k] |= v
+                    else:
+                        cur[k] = v
+            elif isinstance(cur, set) and isinstance(val, set):
+                cur |= val
+            elif isinstance(cur, (int, float)) and isinstance(val, (int, float)):
+                setattr(mod, var, max(cur, val))
+            else:
+                setattr(mod, var, val)
+        except Exception as e:
+            print(f"[Storage] Không khôi phục được {entry}: {type(e).__name__}: {e}")
+
+
+def _save_state():
+    global _state_last
+    if not _state_ready:
+        return
+    data = dict(_state_raw)
+    for entry in STATE_VARS:
+        mod, var = _find_var(entry)
+        if mod is None or not hasattr(mod, var):
+            continue
+        cur = getattr(mod, var)
+        if var == "LIXI_CLAIMED" and isinstance(cur, dict):
+            active = set(getattr(mod, "LIXI_ACTIVE_EVENT", {}).values())
+            cur = {k: v for k, v in cur.items() if k in active}
+        data[entry] = _enc(cur)
+    bm = _bot_module()
+    lobbies = getattr(bm, "game_lobbies", None) if bm else None
+    if isinstance(lobbies, dict):
+        data["__ww_channels"] = list(lobbies.keys())
+    try:
+        text = json.dumps(data, ensure_ascii=False)
+        if text == _state_last:
+            return
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, STATE_FILE)
+        _state_last = text
+    except Exception as e:
+        print(f"[Storage] Lỗi ghi trạng thái: {e}")
+
 
 
 # ---------------------------------------------------------------- nhật ký lệnh + coin
@@ -659,6 +833,7 @@ async def _loop(bot, db_path):
         try:
             TRACKER.flush()
             UPTIME.tick()
+            _save_state()
             now = time.time()
             for cat, cfg in CATS.items():
                 st = state[cat]
@@ -685,6 +860,7 @@ async def _graceful_exit(bot):
     print("[Storage] Nhận tín hiệu tắt, đang lưu dữ liệu lần cuối...")
     try:
         UPTIME.tick()
+        _save_state()
         await asyncio.wait_for(backup_all(bot, _db_path), timeout=20)
     except Exception as e:
         print(f"[Storage] Lưu lần cuối lỗi: {type(e).__name__}: {e}")
@@ -741,6 +917,26 @@ def _patch_bot_module():
         return
 
 
+def _patch_noitu_coin():
+    """noitu.py cộng coin thẳng vào DB (không qua update_user_full) -> gắn thêm nhật ký coin cho nó."""
+    mod = sys.modules.get("noitu") or sys.modules.get("cogs.noitu")
+    if mod is None or not hasattr(mod, "add_coin") or getattr(mod.add_coin, "_ks_patched", False):
+        return
+    orig = mod.add_coin
+
+    def patched(user_id, amount, _orig=orig):
+        new = _orig(user_id, amount)
+        try:
+            TRACKER.record_coin(user_id, new - int(amount), new)
+        except Exception:
+            pass
+        return new
+
+    patched._ks_patched = True
+    mod.add_coin = patched
+    print("[Storage] Đã gắn nhật ký coin cho Nối Từ / Vua TV.")
+
+
 class StorageCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -748,6 +944,7 @@ class StorageCog(commands.Cog):
     async def cog_load(self):
         global _task
         _patch_bot_module()
+        _apply_state()
         prev = getattr(self.bot, "_before_invoke", None)
 
         async def _ks_before_invoke(ctx):
@@ -772,6 +969,26 @@ class StorageCog(commands.Cog):
             pass
         if _task is None or _task.done():
             _task = asyncio.create_task(_loop(self.bot, _db_path))
+
+    @commands.Cog.listener("on_ready")
+    async def _on_ready_state(self):
+        """Khi bot online: nạp nốt biến của các extension, báo các phòng Ma Sói bị hủy, bật lưu trạng thái."""
+        global _state_ready
+        if _state_ready:
+            return
+        _patch_noitu_coin()
+        _apply_state()
+        stale = _state_raw.pop("__ww_channels", []) or []
+        _state_ready = True
+        for cid in stale:
+            try:
+                ch = self.bot.get_channel(int(cid))
+                if ch:
+                    await ch.send("🔄 Bot vừa khởi động lại nên **phòng/ván Ma Sói ở kênh này đã bị hủy**. Gõ `.masoi` để tạo lại nhé!",
+                                  delete_after=60)
+            except Exception:
+                pass
+        _save_state()
 
     @commands.Cog.listener("on_command_completion")
     async def _on_cmd(self, ctx):
@@ -892,4 +1109,5 @@ async def setup(bot):
     # 2) Nạp lại nhật ký + thời gian online từ file vừa khôi phục
     TRACKER.load()
     UPTIME.begin()
+    _load_state_file()
     await bot.add_cog(StorageCog(bot))
