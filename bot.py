@@ -13,15 +13,146 @@ from typing import Optional
 import discord
 from discord.ext import commands
 import threading
-import discord_storage
+from supabase import create_client, Client
+
+# ==========================================
+# 0. KẾT NỐI SUPABASE (CLOUD MEMORY) - ĐỒNG BỘ DỮ LIỆU LÊN MẠNG
+# ==========================================
+# QUAN TRỌNG: thay SUPABASE_URL bằng URL project THẬT của bạn
+# (dạng https://xxxxxxxxxxxx.supabase.co) — lấy trong Supabase Dashboard
+# > Project Settings > API. URL "https://supabase.co" chỉ là ví dụ, không
+# phải URL project thật nên sẽ không kết nối được nếu bạn không thay.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://cztkiffqiqzzadfuxckm.supabase.co")  # TODO: dán URL project thật vào đây
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "sb_publishable_MNqVCJ3phNPXd1I_-l9yHw_AEbRIGJ-")
+
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print("[Cloud] Đã khởi tạo kết nối Supabase.")
+except Exception as e:
+    supabase = None
+    print(f"[Cloud] Lỗi khởi tạo Supabase: {e}")
+
+def cloud_pull_user(user_id):
+    """Tải dữ liệu 1 user từ Supabase về.
+    Dùng khi local sqlite chưa có sẵn user này — ví dụ sau khi bot bị
+    restart/redeploy trên hosting có ổ đĩa tạm (ephemeral) và mất file db."""
+    if supabase is None:
+        return None
+    try:
+        uid_str = str(user_id)
+        res = supabase.table("user_data").select("*").eq("user_id", uid_str).execute()
+        if res.data:
+            return res.data[0]
+    except Exception as e:
+        print(f"[Cloud] Lỗi tải user {user_id}: {e}")
+    return None
+
+def _cloud_push_user_sync(user_id, coin, level, exp, streak, last_streak_time, history_tx):
+    if supabase is None:
+        return
+    try:
+        uid_str = str(user_id)
+        payload = {
+            "user_id": uid_str,
+            "coin": coin,
+            "level": level,
+            "exp": exp,
+            "streak": streak,
+            "last_streak_time": last_streak_time,
+            "history_tx": history_tx,
+        }
+        check = supabase.table("user_data").select("user_id").eq("user_id", uid_str).execute()
+        if check.data:
+            supabase.table("user_data").update(payload).eq("user_id", uid_str).execute()
+        else:
+            supabase.table("user_data").insert(payload).execute()
+    except Exception as e:
+        print(f"[Cloud] Lỗi lưu ngầm dữ liệu cho {user_id}: {e}")
+
+def cloud_push_user(user_id, coin, level, exp, streak, last_streak_time, history_tx):
+    """Đẩy dữ liệu 1 user lên Supabase. Chạy ngầm bằng thread riêng để
+    không làm lag các lệnh của bot."""
+    threading.Thread(
+        target=_cloud_push_user_sync,
+        args=(user_id, coin, level, exp, streak, last_streak_time, history_tx),
+        daemon=True,
+    ).start()
 
 # ==========================================
 # 1. DATABASE SQLITE & HỆ THỐNG STREAK CHUẨN TIKTOK (24 GIỜ)
 # ==========================================
-# Dữ liệu được sao lưu tự động vào các KÊNH CHAT Discord (xem discord_storage.py):
-# DB, cài đặt dashboard, nhật ký lệnh, nhật ký coin... Bot tự khôi phục khi khởi động
-# lại mà mất file (xem hàm main() ở cuối file).
 DB_NAME = "ksbot_master.db"
+
+# ==========================================
+# 0.1 SAO LƯU / KHÔI PHỤC TOÀN BỘ FILE DATABASE LÊN SUPABASE STORAGE
+# ==========================================
+# Cách này backup NGUYÊN file ksbot_master.db (bao gồm users, user_pets,
+# user_items, bot_meta... và bất kỳ bảng nào sinh ra sau này) thay vì phải
+# sửa từng lệnh/từng hàm rải rác trong file — "đồng bộ từ A-Z" một chỗ.
+#
+# YÊU CẦU: vào Supabase Dashboard > Storage > tạo 1 bucket tên đúng như
+# BACKUP_BUCKET bên dưới (mặc định "ksbot-backups"), để chế độ Public
+# hoặc cấu hình policy cho phép SUPABASE_KEY bạn đang dùng đọc/ghi được.
+BACKUP_BUCKET = os.getenv("BACKUP_BUCKET", "ksbot-backups")
+BACKUP_FILE_NAME = "ksbot_master.db"
+AUTO_BACKUP_POLL_SECONDS = 2  # cứ mỗi 2 giây kiểm tra 1 lần xem file db có thay đổi không
+
+def restore_db_from_cloud():
+    """Nếu local CHƯA có file db (vd bot vừa restart/redeploy trên hosting
+    có ổ đĩa tạm nên mất file cũ), tải bản backup mới nhất từ Supabase
+    Storage về để không bị mất dữ liệu users/pets/items."""
+    if supabase is None:
+        print("[Cloud] Supabase chưa kết nối, bỏ qua khôi phục database.")
+        return
+    if os.path.exists(DB_NAME):
+        print("[Cloud] Đã có sẵn file database local, không cần khôi phục.")
+        return
+    try:
+        data = supabase.storage.from_(BACKUP_BUCKET).download(BACKUP_FILE_NAME)
+        with open(DB_NAME, "wb") as f:
+            f.write(data)
+        print(f"[Cloud] Đã khôi phục toàn bộ database từ Supabase Storage ({len(data)} bytes)!")
+    except Exception as e:
+        print(f"[Cloud] Không tìm thấy backup cũ hoặc lỗi tải về: {e} (sẽ tạo database mới từ đầu)")
+
+def backup_db_to_cloud():
+    """Đẩy NGUYÊN file database hiện tại lên Supabase Storage, ghi đè bản cũ."""
+    if supabase is None:
+        return
+    try:
+        with open(DB_NAME, "rb") as f:
+            data = f.read()
+        try:
+            supabase.storage.from_(BACKUP_BUCKET).update(BACKUP_FILE_NAME, data)
+        except Exception:
+            # Nếu file chưa tồn tại trên storage (lần đầu) thì upload mới
+            supabase.storage.from_(BACKUP_BUCKET).upload(BACKUP_FILE_NAME, data)
+        print(f"[Cloud] Đã sao lưu toàn bộ database lên Supabase Storage ({len(data)} bytes).")
+    except Exception as e:
+        print(f"[Cloud] Lỗi sao lưu database: {e}")
+
+def _auto_backup_loop():
+    """Không đợi hẹn giờ cố định — cứ mỗi AUTO_BACKUP_POLL_SECONDS giây kiểm
+    tra xem file database có VỪA bị ghi đổi hay không (dựa vào mtime, tức
+    thời điểm sửa đổi cuối). Có thay đổi -> backup ngay lập tức (đè bản cũ).
+    Không có gì thay đổi -> bỏ qua, không tốn request lãng phí."""
+    last_backed_up_mtime = None
+    while True:
+        try:
+            if os.path.exists(DB_NAME):
+                current_mtime = os.path.getmtime(DB_NAME)
+                if last_backed_up_mtime is None or current_mtime > last_backed_up_mtime:
+                    backup_db_to_cloud()
+                    last_backed_up_mtime = current_mtime
+        except Exception as e:
+            print(f"[Cloud] Lỗi khi kiểm tra thay đổi database: {e}")
+        time.sleep(AUTO_BACKUP_POLL_SECONDS)
+
+def start_auto_backup():
+    """Gọi hàm này SAU KHI init_db() chạy xong — backup ngay 1 lần, rồi từ
+    đó cứ có thay đổi trong database là tự backup lại ngay (xem _auto_backup_loop)."""
+    backup_db_to_cloud()
+    threading.Thread(target=_auto_backup_loop, daemon=True).start()
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -62,7 +193,9 @@ def init_db():
     conn.commit()
     conn.close()
 
+restore_db_from_cloud()
 init_db()
+start_auto_backup()
 
 def get_user(user_id):
     uid_str = str(user_id)
@@ -73,10 +206,24 @@ def get_user(user_id):
     current_time = time.time()
     
     if row is None:
-        default_coin = 100000
-        cursor.execute('INSERT INTO users (user_id, coin, level, exp, streak, last_streak_time, history_tx) VALUES (?, ?, 1, 0, 1, ?, "")', (uid_str, default_coin, current_time))
-        conn.commit()
-        data = (default_coin, 1, 0, 1, current_time, "")
+        # Thử tải lại từ Supabase trước (phòng khi local db bị mất do restart/redeploy)
+        cloud_row = cloud_pull_user(uid_str)
+        if cloud_row:
+            default_coin = cloud_row.get("coin", 100000)
+            level0 = cloud_row.get("level", 1)
+            exp0 = cloud_row.get("exp", 0)
+            streak0 = cloud_row.get("streak", 1)
+            last_time0 = cloud_row.get("last_streak_time", current_time)
+            history0 = cloud_row.get("history_tx", "")
+            cursor.execute('INSERT INTO users (user_id, coin, level, exp, streak, last_streak_time, history_tx) VALUES (?, ?, ?, ?, ?, ?, ?)', (uid_str, default_coin, level0, exp0, streak0, last_time0, history0))
+            conn.commit()
+            data = (default_coin, level0, exp0, streak0, last_time0, history0)
+            print(f"[Cloud] Đã khôi phục dữ liệu user {uid_str} từ Supabase.")
+        else:
+            default_coin = 100000
+            cursor.execute('INSERT INTO users (user_id, coin, level, exp, streak, last_streak_time, history_tx) VALUES (?, ?, 1, 0, 1, ?, "")', (uid_str, default_coin, current_time))
+            conn.commit()
+            data = (default_coin, 1, 0, 1, current_time, "")
     else:
         data = row
     conn.close()
@@ -86,18 +233,14 @@ def update_user_full(user_id, coin, level, exp, streak, last_streak_time, histor
     uid_str = str(user_id)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # Lấy coin cũ để ghi nhật ký biến động coin (ai, trước, sau, do lệnh nào, ở kênh nào)
-    cursor.execute('SELECT coin FROM users WHERE user_id = ?', (uid_str,))
-    _old_row = cursor.fetchone()
-    old_coin = _old_row[0] if _old_row else None
     cursor.execute('''
         INSERT OR REPLACE INTO users (user_id, coin, level, exp, streak, last_streak_time, history_tx) 
         VALUES (?, ?, ?, ?, ?, ?, ?)
     ''', (uid_str, coin, level, exp, streak, last_streak_time, history_tx))
     conn.commit()
     conn.close()
-    if old_coin is not None and old_coin != coin:
-        discord_storage.log_coin(uid_str, old_coin, coin, level)
+    # Đồng bộ ngay lên Supabase để không mất dữ liệu khi bot restart/redeploy
+    cloud_push_user(uid_str, coin, level, exp, streak, last_streak_time, history_tx)
 
 def add_exp_to_user(user_id, exp_gain):
     uid_str = str(user_id)
@@ -5263,32 +5406,20 @@ async def dashboard_outbox_loop():
 
 async def main():
     async with bot:
+        await bot.load_extension("noitu")
+        await bot.load_extension("ai")
+        await bot.load_extension("lixi_admin")
+        await bot.load_extension("owner_mute")
+        await bot.load_extension("status") 
+        await bot.load_extension("server_manager")
+        await bot.load_extension("quest")
+        await bot.load_extension("fun")
+        await bot.load_extension("pingbot")
+        await bot.load_extension("gif")
+        asyncio.create_task(dashboard_stats_loop())
+        asyncio.create_task(dashboard_outbox_loop())
         try:
-            # 1) Đăng nhập (chưa kết nối gateway) để có quyền gọi API Discord.
-            await bot.login(TOKEN)
-            # 2) Nếu DB local trống (host mất ổ đĩa) -> khôi phục TOÀN BỘ dữ liệu từ các
-            #    kênh lưu trữ Discord (DB, cài đặt dashboard, nhật ký lệnh, nhật ký coin...).
-            await discord_storage.restore_if_needed(bot, DB_NAME)
-            init_db()
-            # 3) Bật vòng tự sao lưu + tự dọn dẹp kênh lưu trữ.
-            discord_storage.start(bot, DB_NAME)
-
-            await bot.load_extension("noitu")
-            await bot.load_extension("ai")
-            await bot.load_extension("lixi_admin")
-            await bot.load_extension("owner_mute")
-            await bot.load_extension("status") 
-            await bot.load_extension("server_manager")
-            await bot.load_extension("quest")
-            await bot.load_extension("fun")
-            await bot.load_extension("pingbot")
-            await bot.load_extension("gif")
-            await bot.load_extension("discord_storage")   # /savedata, /coinlog, /cmdlog + ghi nhật ký lệnh
-            asyncio.create_task(dashboard_stats_loop())
-            asyncio.create_task(dashboard_outbox_loop())
-
-            # 4) Kết nối gateway (bot.start = login + connect, nên ở đây chỉ cần connect).
-            await bot.connect()
+            await bot.start(TOKEN)
         except discord.HTTPException as e:
             # 429 từ Cloudflare (lỗi 1015) = IP của host đang bị Discord chặn.
             # Thoát với mã 42 để keep_alive.py chờ lâu rồi mới thử lại, thay vì
