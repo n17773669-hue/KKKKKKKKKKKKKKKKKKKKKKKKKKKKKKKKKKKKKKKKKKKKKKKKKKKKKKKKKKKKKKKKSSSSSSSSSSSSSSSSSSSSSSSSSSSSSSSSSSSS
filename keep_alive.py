@@ -170,6 +170,8 @@ def build_rpc(body):
         p["channel_id"] = _id(body.get("channel_id"))
         p["content"] = str(body.get("content") or "")[:2000]
         p["reply_to"] = _id(body.get("reply_to"))
+        # Khi trả lời: có tag (ping) người được trả lời hay không. Mặc định CÓ.
+        p["ping"] = body.get("ping") is not False
         ups = []
         for uid in (body.get("uploads") or [])[:10]:
             u = find_upload(uid)
@@ -619,16 +621,17 @@ body.has-bg .card { background: rgba(21,25,35,.78); -webkit-backdrop-filter: blu
 .tab.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 
 /* ============ CHAT KIỂU DISCORD ============ */
-.dc { display: grid; grid-template-columns: 72px 248px minmax(0, 1fr); height: calc(100vh - 175px); min-height: 560px; border-radius: 14px; overflow: hidden; border: 1px solid #1e1f22; background: #313338; margin-bottom: 18px; color: #dbdee1; }
-.dc-rail { background: #1e1f22; overflow-y: auto; padding: 12px 0; display: flex; flex-direction: column; align-items: center; gap: 8px; scrollbar-width: none; }
+/* grid-template-rows + min-height:0 để CẢ 3 CỘT (server, kênh, chat) đều tự cuộn được */
+.dc { display: grid; grid-template-columns: 72px 248px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); height: calc(100vh - 175px); min-height: 560px; border-radius: 14px; overflow: hidden; border: 1px solid #1e1f22; background: #313338; margin-bottom: 18px; color: #dbdee1; }
+.dc-rail { background: #1e1f22; overflow-y: auto; padding: 12px 0; display: flex; flex-direction: column; align-items: center; gap: 8px; scrollbar-width: none; min-height: 0; overscroll-behavior: contain; }
 .dc-rail::-webkit-scrollbar { display: none; }
 .rail-ico { width: 48px; height: 48px; border-radius: 50%; background: #313338; display: grid; place-items: center; cursor: pointer; overflow: hidden; font-weight: 600; color: #dbdee1; border: 0; transition: border-radius .15s, background .15s; flex: none; font-size: 18px; position: relative; }
 .rail-ico:hover, .rail-ico.on { border-radius: 16px; background: var(--accent); color: var(--accent-ink); }
 .rail-ico img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .rail-sep { width: 32px; height: 2px; background: #35373c; flex: none; border-radius: 2px; }
-.dc-side { background: #2b2d31; display: flex; flex-direction: column; min-width: 0; }
-.dc-side-head { padding: 14px; font-weight: 700; border-bottom: 1px solid #1e1f22; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 0 rgba(0,0,0,.15); }
-.dc-chans { overflow-y: auto; padding: 8px; flex: 1; }
+.dc-side { background: #2b2d31; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.dc-side-head { padding: 14px; font-weight: 700; border-bottom: 1px solid #1e1f22; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 0 rgba(0,0,0,.15); flex: none; }
+.dc-chans { overflow-y: auto; padding: 8px; flex: 1; min-height: 0; overscroll-behavior: contain; scrollbar-width: thin; }
 .grp { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #949ba4; padding: 14px 6px 4px; letter-spacing: .02em; }
 .chan { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: 0; color: #949ba4; padding: 6px 8px; border-radius: 6px; cursor: pointer; text-align: left; font-size: 14px; }
 .chan:hover { background: #35373c; color: #dbdee1; }
@@ -642,10 +645,10 @@ body.has-bg .card { background: rgba(21,25,35,.78); -webkit-backdrop-filter: blu
 .dc-note { padding: 14px 10px; font-size: 13px; color: #949ba4; }
 
 .dc-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #313338; position: relative; }
-.dc-top { padding: 12px 16px; font-weight: 700; border-bottom: 1px solid #26272b; display: flex; gap: 8px; align-items: center; box-shadow: 0 1px 0 rgba(0,0,0,.15); }
+.dc-top { padding: 12px 16px; font-weight: 700; border-bottom: 1px solid #26272b; display: flex; gap: 8px; align-items: center; box-shadow: 0 1px 0 rgba(0,0,0,.15); flex: none; }
 .dc-top .dim { color: #949ba4; font-weight: 400; }
 .dc-back { display: none; background: none; border: 0; color: #dbdee1; font-size: 22px; cursor: pointer; padding: 0 6px; }
-.dc-msgs { flex: 1; overflow-y: auto; padding: 8px 0 12px; min-height: 0; }
+.dc-msgs { flex: 1; overflow-y: auto; padding: 8px 0 12px; min-height: 0; overscroll-behavior: contain; }
 .dc-empty { padding: 40px 20px; text-align: center; color: #949ba4; font-size: 14px; }
 .dc-older { display: block; margin: 8px auto; background: #2b2d31; border: 0; color: #b5bac1; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 12px; }
 .dc-older:hover { color: #fff; }
@@ -690,9 +693,12 @@ body.has-bg .card { background: rgba(21,25,35,.78); -webkit-backdrop-filter: blu
 .ce { width: 22px; height: 22px; vertical-align: -5px; object-fit: contain; }
 .rxb .ce { width: 18px; height: 18px; vertical-align: middle; }
 
-.dc-comp { padding: 0 16px 16px; position: relative; }
-.dc-reply { background: #2b2d31; border-radius: 8px 8px 0 0; padding: 6px 12px; font-size: 12px; color: #b5bac1; display: flex; justify-content: space-between; align-items: center; }
+.dc-comp { padding: 0 16px 16px; position: relative; flex: none; }
+.dc-reply { background: #2b2d31; border-radius: 8px 8px 0 0; padding: 6px 12px; font-size: 12px; color: #b5bac1; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .dc-reply button { background: none; border: 0; color: #b5bac1; cursor: pointer; font-size: 14px; }
+.dc-reply .rbtns { display: flex; align-items: center; gap: 8px; flex: none; }
+.dc-reply .pingbtn { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 6px; background: #1e1f22; color: #949ba4; }
+.dc-reply .pingbtn.on { background: #5865f2; color: #fff; }
 .dc-files { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 0 8px; }
 .dc-files:empty { display: none; }
 .fchip { display: flex; align-items: center; gap: 8px; background: #2b2d31; border-radius: 8px; padding: 6px 10px; font-size: 12px; max-width: 220px; }
@@ -716,6 +722,18 @@ body.has-bg .card { background: rgba(21,25,35,.78); -webkit-backdrop-filter: blu
 .emo-grid img { width: 26px; height: 26px; object-fit: contain; }
 .dc.drag .dc-main::after { content: "Thả file vào đây để đính kèm"; position: absolute; inset: 0; background: rgba(88,101,242,.35); display: grid; place-items: center; font-weight: 700; z-index: 20; }
 
+/* Icon bot + nút khóa cuộn trang */
+.dc-bot { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #b5bac1; min-width: 0; }
+.dc-bot #dcBotName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.dc-bot-ico { width: 24px; height: 24px; border-radius: 50%; background: #5865f2; display: grid; place-items: center; font-size: 14px; overflow: hidden; flex: none; }
+.dc-bot-ico img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lock-btn { background: #2b2d31; border: 0; border-radius: 8px; padding: 5px 10px; cursor: pointer; color: #dbdee1; font-size: 14px; flex: none; }
+.lock-btn:hover { background: #3a3c42; }
+.lock-btn.on { background: var(--accent); color: var(--accent-ink); }
+html.chat-lock, html.chat-lock body { overflow: hidden; }
+html.chat-lock .wrap { padding-bottom: 0; }
+html.chat-lock .dc { height: calc(100vh - 150px); }
+
 @media (max-width: 800px) {
     .dc { grid-template-columns: 60px minmax(0, 1fr); height: calc(100vh - 140px); }
     .dc-rail .rail-ico { width: 42px; height: 42px; }
@@ -723,6 +741,7 @@ body.has-bg .card { background: rgba(21,25,35,.78); -webkit-backdrop-filter: blu
     .dc.in-chat .dc-side { display: none; }
     .dc-back { display: block; }
     .dc-pop { right: 8px; }
+    .dc-bot #dcBotName { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
@@ -889,11 +908,16 @@ PAGE_JS = r"""
     var brandMark = document.getElementById('brandMark');
     var shownAvatar = null;
     function applyIdentity() {
-        if (liveStats.bot_name) pnameText.textContent = liveStats.bot_name;
+        if (liveStats.bot_name) {
+            pnameText.textContent = liveStats.bot_name;
+            var bn = document.getElementById('dcBotName');
+            if (bn) bn.textContent = liveStats.bot_name;
+        }
         var url = liveStats.bot_avatar;
         if (!url || !/^https:\/\//.test(url) || url === shownAvatar) return;
         shownAvatar = url;
-        [avatarEl, brandMark].forEach(function (box) {
+        [avatarEl, brandMark, document.getElementById('dcBotIco')].forEach(function (box) {
+            if (!box) return;
             var img = document.createElement('img');
             img.alt = '';
             img.onload = function () { box.innerHTML = ''; box.appendChild(img); };
@@ -1247,12 +1271,14 @@ PAGE_JS = r"""
             var sig = JSON.stringify(C.guilds.map(function (g) { return [g.id, g.icon]; })) + C.guild;
             if (sig === C.railSig) return;
             C.railSig = sig;
+            var keep = rail.scrollTop;
             var o = '<button type="button" class="rail-ico' + (C.guild === '@dm' ? ' on' : '') + '" data-g="@dm" title="Tin nhắn riêng">💬</button><div class="rail-sep"></div>';
             C.guilds.forEach(function (g) {
                 var ico = httpsOnly(g.icon) ? '<img src="' + h(g.icon) + '" alt="">' : h((g.name || '?').charAt(0).toUpperCase());
                 o += '<button type="button" class="rail-ico' + (String(g.id) === String(C.guild) ? ' on' : '') + '" data-g="' + h(g.id) + '" title="' + h(g.name) + '">' + ico + '</button>';
             });
             rail.innerHTML = o;
+            rail.scrollTop = keep;
         }
         rail.addEventListener('click', function (e) {
             var b = e.target.closest('.rail-ico'); if (!b) return;
@@ -1330,14 +1356,25 @@ PAGE_JS = r"""
             else if (!m) { return; }
             else if (act === 'rx') toggleReact(m.id, t.getAttribute('data-emoji'), t.getAttribute('data-me') === '1');
             else if (act === 'rxadd') openPop('react', m.id);
-            else if (act === 'reply') { C.reply = { id: m.id, name: m.author.name }; replyBar.hidden = false; replyBar.innerHTML = '<span>Đang trả lời <b>' + h(m.author.name) + '</b></span><button type="button" id="dcReplyX">✕</button>'; ta.focus(); }
+            else if (act === 'reply') { C.reply = { id: m.id, name: m.author.name, ping: true }; drawReply(); ta.focus(); }
             else if (act === 'del') {
                 if (!confirm('Xóa tin nhắn này?')) return;
                 rpc('delete', { channel_id: C.chan, message_id: m.id }).then(function () { C.list = C.list.filter(function (x) { return x.id !== m.id; }); renderMsgs(false); notify('Đã xóa tin nhắn'); }).catch(function (er) { notify(er.message, true); });
             }
         });
-        function clearReply() { C.reply = null; replyBar.hidden = true; replyBar.innerHTML = ''; }
-        replyBar.addEventListener('click', function (e) { if (e.target.id === 'dcReplyX') clearReply(); });
+        /* thanh "Đang trả lời" có nút @ bật/tắt tag người được trả lời (mặc định BẬT) */
+        function drawReply() {
+            if (!C.reply) { replyBar.hidden = true; replyBar.innerHTML = ''; return; }
+            replyBar.hidden = false;
+            replyBar.innerHTML = '<span>Đang trả lời <b>' + h(C.reply.name) + '</b></span>' +
+                '<span class="rbtns"><button type="button" class="pingbtn' + (C.reply.ping ? ' on' : '') + '" id="dcPing" title="Bật: tag người được trả lời. Tắt: trả lời im lặng">@ ' + (C.reply.ping ? 'BẬT' : 'TẮT') + '</button>' +
+                '<button type="button" id="dcReplyX" title="Hủy trả lời">✕</button></span>';
+        }
+        function clearReply() { C.reply = null; drawReply(); }
+        replyBar.addEventListener('click', function (e) {
+            if (e.target.id === 'dcReplyX') clearReply();
+            else if (e.target.id === 'dcPing' && C.reply) { C.reply.ping = !C.reply.ping; drawReply(); }
+        });
 
         /* --- picker emoji --- */
         function popBuild() {
@@ -1404,7 +1441,7 @@ PAGE_JS = r"""
             C.sending = true; sendBtn.disabled = true;
             var files = C.pending.slice();
             uploadAll(files).then(function (ids) {
-                return rpc('send', { channel_id: C.chan, content: text, reply_to: C.reply ? C.reply.id : null, uploads: ids });
+                return rpc('send', { channel_id: C.chan, content: text, reply_to: C.reply ? C.reply.id : null, ping: C.reply ? C.reply.ping : true, uploads: ids });
             }).then(function () {
                 ta.value = ''; autosize(); C.pending = []; renderFiles(); clearReply();
                 C.busy = false; return loadHist(true, true);
@@ -1414,6 +1451,25 @@ PAGE_JS = r"""
         sendBtn.addEventListener('click', send);
         ta.addEventListener('input', autosize);
         ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } });
+
+        /* --- nút KHÓA: khóa cuộn cả trang khi ở tab Chat, chỉ cuộn trong 3 cột --- */
+        var lockBtn = document.getElementById('dcLock');
+        var locked = true;
+        try { locked = localStorage.getItem('ks_chat_lock') !== '0'; } catch (e) {}
+        function applyLock() {
+            var on = locked && document.body.getAttribute('data-tab') === 'chat';
+            document.documentElement.classList.toggle('chat-lock', on);
+            lockBtn.textContent = locked ? '🔒' : '🔓';
+            lockBtn.classList.toggle('on', locked);
+            lockBtn.title = locked ? 'Đang khóa trang, chỉ cuộn trong chat. Bấm để mở' : 'Bấm để khóa trang, không cuộn cả web';
+        }
+        lockBtn.addEventListener('click', function () {
+            locked = !locked;
+            try { localStorage.setItem('ks_chat_lock', locked ? '1' : '0'); } catch (e) {}
+            applyLock();
+        });
+        window.__chatLockApply = applyLock;
+        applyLock();
 
         /* --- cập nhật tin mới --- */
         setInterval(function () {
@@ -1440,6 +1496,7 @@ PAGE_JS = r"""
     function setTab(name) {
         if (TABS.indexOf(name) < 0) name = 'overview';
         document.body.setAttribute('data-tab', name);
+        if (window.__chatLockApply) window.__chatLockApply();
         document.querySelectorAll('[data-show]').forEach(function (el) { el.hidden = el.getAttribute('data-show').split(' ').indexOf(name) < 0; });
         document.querySelectorAll('.tab').forEach(function (t) {
             var on = t.getAttribute('data-tab') === name;
@@ -1472,7 +1529,12 @@ CHAT_BLOCK = """
         <div class="dc-chans" id="dcChans"><div class="dc-note">Chọn một server ở cột bên trái, hoặc 💬 để xem tin nhắn riêng.</div></div>
     </aside>
     <div class="dc-main">
-        <div class="dc-top"><button type="button" class="dc-back" id="dcBack" aria-label="Quay lại">‹</button><span id="dcTitle" class="dim">Chọn một kênh để bắt đầu</span></div>
+        <div class="dc-top">
+            <button type="button" class="dc-back" id="dcBack" aria-label="Quay lại">‹</button>
+            <span id="dcTitle" class="dim">Chọn một kênh để bắt đầu</span>
+            <span class="dc-bot" title="Bạn đang chat bằng tên bot này"><span class="dc-bot-ico" id="dcBotIco">🤖</span><span id="dcBotName">Bot</span></span>
+            <button type="button" class="lock-btn" id="dcLock" aria-label="Khóa cuộn trang">🔒</button>
+        </div>
         <div class="dc-msgs" id="dcMsgs"><div class="dc-empty">Chưa chọn kênh nào</div></div>
         <div class="dc-comp">
             <div class="dc-reply" id="dcReply" hidden></div>
