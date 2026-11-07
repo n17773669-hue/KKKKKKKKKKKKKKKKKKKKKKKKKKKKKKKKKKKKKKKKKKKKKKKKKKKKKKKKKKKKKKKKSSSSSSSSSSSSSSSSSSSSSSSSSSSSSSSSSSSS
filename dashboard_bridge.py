@@ -103,6 +103,8 @@ def ser_embed(e):
         "footer": (d.get("footer") or {}).get("text"),
         "image": (d.get("image") or {}).get("url"),
         "thumb": (d.get("thumbnail") or {}).get("url"),
+        # GIF từ Tenor/Giphy là embed loại "gifv": có file video .mp4 chạy lặp. Embed khác (YouTube...) không lấy video.
+        "video": (d.get("video") or {}).get("url") if d.get("type") == "gifv" else None,
         "fields": [
             {"name": f.get("name"), "value": (f.get("value") or "")[:200]}
             for f in (d.get("fields") or [])[:6]
