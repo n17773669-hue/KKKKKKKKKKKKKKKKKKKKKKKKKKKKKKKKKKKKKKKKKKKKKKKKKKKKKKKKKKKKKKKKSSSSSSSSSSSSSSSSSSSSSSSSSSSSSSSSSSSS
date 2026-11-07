@@ -1011,8 +1011,12 @@ class StorageCog(commands.Cog):
         """Xem thời gian bot đã online."""
         UPTIME.tick()
         d = UPTIME.data
+        
+        # Đọc trực tiếp tổng thời gian tích lũy chuẩn từ file uptime.json giống trên web
+        total_sec = float(d.get("total_seconds", 0.0))
+        
         embed = discord.Embed(title="⏱️ THỜI GIAN BOT ONLINE", color=0x57F287)
-        embed.add_field(name="🟢 Online liên tục", value=fmt_dur(d.get("total_seconds", 0)), inline=False)
+        embed.add_field(name="🟢 Online liên tục", value=fmt_dur(total_sec), inline=False)
         embed.add_field(name="🔁 Số lần khởi động lại", value=f"{max(0, int(d.get('sessions', 1)) - 1):,}", inline=True)
         embed.add_field(name="📅 Chạy từ ngày", value=str(d.get("first_start", "?"))[:10], inline=True)
         lat = self.bot.latency
