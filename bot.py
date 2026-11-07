@@ -5298,7 +5298,7 @@ async def dashboard_stats_loop():
                         if g.me is not None and c.permissions_for(g.me).send_messages
                     ][:100],
                 }
-                for g in sorted(bot.guilds, key=lambda g: g.member_count or 0, reverse=True)[:25]
+                for g in sorted(bot.guilds, key=lambda g: g.member_count or 0, reverse=True)[:60]
             ]
             ram_mb = None
             if psutil is not None:
