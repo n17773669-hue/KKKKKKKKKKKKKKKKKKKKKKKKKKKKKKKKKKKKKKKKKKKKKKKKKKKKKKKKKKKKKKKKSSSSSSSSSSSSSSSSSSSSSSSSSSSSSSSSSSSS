@@ -367,6 +367,9 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--accen
 .modes.platforms { grid-template-columns: repeat(4, 1fr); }
 .modes.platforms .mode span { flex-direction: column; text-align: center; gap: 6px; padding: 12px 8px; }
 @media (max-width: 720px) { .modes.platforms { grid-template-columns: 1fr 1fr; } }
+.modes.statuses { grid-template-columns: repeat(5, 1fr); }
+.modes.statuses .mode span { flex-direction: column; text-align: center; gap: 6px; padding: 12px 8px; }
+@media (max-width: 720px) { .modes.statuses { grid-template-columns: 1fr 1fr; } }
 .mode input { position: absolute; opacity: 0; pointer-events: none; }
 .mode span {
     display: flex; align-items: center; gap: 10px; padding: 12px 14px;
@@ -1330,7 +1333,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
                 <div class="field">
                     <span class="label">Màu chấm trạng thái</span>
-                    <div class="modes">
+                    <div class="modes statuses">
                         <label class="mode"><input type="radio" name="status_mode" value="online" __M_ONLINE__>
                             <span><i class="dot" style="background:#3fc380"></i><div>Online<small>Chấm xanh</small></div></span></label>
                         <label class="mode"><input type="radio" name="status_mode" value="idle" __M_IDLE__>
