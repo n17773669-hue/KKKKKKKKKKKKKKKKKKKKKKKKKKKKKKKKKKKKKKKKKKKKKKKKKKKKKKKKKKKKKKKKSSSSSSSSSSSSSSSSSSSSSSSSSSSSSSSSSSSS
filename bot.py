@@ -5408,7 +5408,6 @@ async def main():
     async with bot:
         await bot.load_extension("discord_storage")
         await bot.load_extension("noitu")
-        await bot.load_extension("ai")
         await bot.load_extension("lixi_admin")
         await bot.load_extension("owner_mute")
         await bot.load_extension("status") 
