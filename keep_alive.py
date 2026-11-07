@@ -2,6 +2,8 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import urllib.parse
 import threading
 import subprocess
+import datetime
+import signal
 import html
 import time
 import json
@@ -62,6 +64,48 @@ def read_activity():
         return items[:ACTIVITY_MAX]
     except Exception:
         return []
+
+
+# Thời gian online của bot: discord_storage.py cộng dồn vào uptime.json mỗi ~10 giây
+# và backup lên kênh #ksbot-uptime, nên số này không mất khi host deploy lại.
+UPTIME_FILE = "uptime.json"
+
+
+def read_uptime():
+    out = {"running": False, "session_seconds": None, "total_seconds": None,
+           "sessions": None, "longest_session": None, "first_start": None}
+    try:
+        with open(UPTIME_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+    except Exception:
+        return out
+    if not isinstance(d, dict):
+        return out
+
+    running = bot_status()["running"]
+    total = float(d.get("total_seconds", 0))
+    longest = float(d.get("longest_session", 0))
+    session = None
+    if running:
+        # file được ghi mỗi ~10s -> cộng thêm phần chênh để số chạy mượt
+        try:
+            gap = max(0.0, min(30.0, time.time() - os.path.getmtime(UPTIME_FILE)))
+        except OSError:
+            gap = 0.0
+        total += gap
+        try:
+            start = datetime.datetime.fromisoformat(d.get("current_session_start"))
+            session = max(0.0, time.time() - start.timestamp())
+        except Exception:
+            session = float(d.get("last_session_seconds", 0))
+        longest = max(longest, session)
+
+    out.update({
+        "running": running, "session_seconds": session, "total_seconds": total,
+        "sessions": d.get("sessions"), "longest_session": longest,
+        "first_start": str(d.get("first_start", ""))[:10] or None,
+    })
+    return out
 
 
 # Hàng chờ tin nhắn: dashboard ghi job vào đây, bot.py đọc và gửi qua Discord
@@ -239,6 +283,24 @@ def restart_bot():
         p = BOT_STATE["process"]
     if p is not None and p.poll() is None:
         p.terminate()
+
+
+def _forward_sigterm(signum, frame):
+    """Host (Render/Railway) tắt dashboard -> chuyển SIGTERM xuống bot.py để
+    discord_storage kịp lưu uptime/coin/trạng thái lần cuối lên kênh Discord."""
+    BOT_STATE["should_run"] = False
+    BOT_STATE["stopped_by_user"] = True
+    p = BOT_STATE.get("process")
+    if p is not None and p.poll() is None:
+        try:
+            p.terminate()          # bot.py -> _graceful_exit -> backup_all
+            p.wait(timeout=25)
+        except Exception:
+            try:
+                p.kill()
+            except Exception:
+                pass
+    os._exit(0)
 
 
 def default_copy():
@@ -1035,6 +1097,37 @@ PAGE_JS = """
         fetch('/outbox', { cache: 'no-store' }).then(function (r) { return r.json(); })
             .then(renderOutbox).catch(function () {});
     }
+    // Đồng hồ online LIÊN TỤC: lấy tổng thời gian đã cộng dồn (không reset khi bot khởi động lại)
+    // rồi đếm tiếp từng giây ở trình duyệt; mỗi 10s đồng bộ lại với server.
+    var upBase = null, upBaseAt = 0, upRunning = false;
+    function fmtClock(sec) {
+        sec = Math.max(0, Math.floor(sec));
+        var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600),
+            m = Math.floor((sec % 3600) / 60), s = sec % 60;
+        return (d ? d + ' ngày ' : '') + (d || h ? h + ' giờ ' : '') + m + ' phút ' + s + ' giây';
+    }
+    function drawUptime() {
+        var el = document.getElementById('upTotal');
+        if (upBase == null) { el.textContent = '—'; return; }
+        var extra = upRunning ? (Date.now() - upBaseAt) / 1000 : 0;
+        el.textContent = fmtClock(upBase + extra);
+    }
+    function pollUptime() {
+        fetch('/uptime', { cache: 'no-store' }).then(function (r) { return r.json(); })
+            .then(function (u) {
+                upBase = u.total_seconds != null ? Number(u.total_seconds) : null;
+                upBaseAt = Date.now();
+                upRunning = !!u.running;
+                drawUptime();
+                document.getElementById('upSessions').textContent = u.sessions != null ? num(Math.max(0, u.sessions - 1)) : '—';
+                document.getElementById('upFirst').textContent = u.first_start || '—';
+                document.getElementById('upFoot').textContent = u.first_start
+                    ? (upRunning ? 'Đang đếm tiếp từ tổng thời gian đã lưu, khởi động lại không bị reset' : 'Bot đang tắt, đồng hồ tạm dừng và sẽ đếm tiếp khi bật lại')
+                      + ' • lưu trên kênh Discord nên deploy lại cũng không mất'
+                    : 'Chưa có dữ liệu uptime (bot cần load discord_storage)';
+            }).catch(function () {});
+    }
+    setInterval(drawUptime, 1000);
     function pollBotState() {
         fetch('/botctl', { cache: 'no-store' }).then(function (r) { return r.json(); })
             .then(function (d) {
@@ -1236,10 +1329,12 @@ PAGE_JS = """
     pollActivity();
     pollOutbox();
     pollBotState();
+    pollUptime();
     setInterval(pollStats, 10000);
     setInterval(pollActivity, 15000);
     setInterval(pollOutbox, 8000);
     setInterval(pollBotState, 8000);
+    setInterval(pollUptime, 10000);
 })();
 """
 
@@ -1446,6 +1541,12 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                     </div>
                 </div>
                 <p class="ov-foot" id="ovFoot">Đang chờ dữ liệu từ bot...</p>
+                <div class="ov-tiles" style="margin-top:14px">
+                    <div class="ov-tile" style="grid-column: span 2"><span>Bot online liên tục</span><b id="upTotal">—</b></div>
+                    <div class="ov-tile"><span>Số lần khởi động lại</span><b id="upSessions">—</b></div>
+                    <div class="ov-tile"><span>Chạy từ ngày</span><b id="upFirst">—</b></div>
+                </div>
+                <p class="ov-foot" id="upFoot"></p>
             </section>
 
             <section class="card" data-show="overview">
@@ -1639,12 +1740,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_ping_ok()
             return
 
-        if self.path in ("/stats", "/activity", "/outbox", "/botctl"):
+        if self.path in ("/stats", "/activity", "/outbox", "/botctl", "/uptime"):
             payload = {
                 "/stats": read_stats,
                 "/activity": read_activity,
                 "/outbox": lambda: list(reversed(read_outbox()))[:10],
                 "/botctl": bot_status,
+                "/uptime": read_uptime,
             }[self.path]()
             out = json.dumps(payload).encode("utf-8")
             self.send_response(200)
@@ -1803,7 +1905,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         # Bớt spam log GET /ping, log gọn lại
-        quiet_paths = ("/ping", "/healthz", "/stats", "/activity", "/outbox", "/botctl")
+        quiet_paths = ("/ping", "/healthz", "/stats", "/activity", "/outbox", "/botctl", "/uptime")
         if self.path not in quiet_paths:
             super().log_message(format, *args)
 
@@ -1901,5 +2003,11 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_web)
     t.daemon = True
     t.start()
+
+    # Host tắt dashboard -> chuyển SIGTERM xuống bot để lưu uptime lần cuối
+    try:
+        signal.signal(signal.SIGTERM, _forward_sigterm)
+    except (ValueError, OSError):
+        pass
 
     run_bot_forever()
