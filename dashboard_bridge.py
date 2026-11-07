@@ -158,6 +158,7 @@ class DashboardBridge(commands.Cog):
         self.bot = bot
         self.task = None
         self.user_cache = {}
+        self.unread = {}
 
     async def cog_load(self):
         self.task = asyncio.create_task(self._loop())
@@ -166,12 +167,24 @@ class DashboardBridge(commands.Cog):
         if self.task:
             self.task.cancel()
 
-    # ---------- ghi nhớ ai từng nhắn DM với bot ----------
+    # ---------- ghi nhớ DM + đếm tin chưa đọc ----------
     @commands.Cog.listener()
     async def on_message(self, message):
         ch = message.channel
         if isinstance(ch, discord.DMChannel) and ch.recipient and not ch.recipient.bot:
             _remember_dm(ch.recipient.id)
+        me = self.bot.user
+        if me is None or message.author.id == me.id:
+            return
+        g = message.guild
+        e = self.unread.setdefault(str(ch.id), {"g": str(g.id) if g else None, "u": None, "n": 0, "m": 0})
+        e["n"] += 1
+        if g is None:
+            e["u"] = str(message.author.id)
+            e["m"] += 1
+        elif (me in message.mentions or message.mention_everyone
+              or (g.me and any(r in g.me.roles for r in message.role_mentions))):
+            e["m"] += 1
 
     # ---------- vòng lặp nhận lệnh ----------
     async def _loop(self):
@@ -321,7 +334,7 @@ class DashboardBridge(commands.Cog):
             await ch.send(
                 content=content or None,
                 files=files or None,
-                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=bool(d.get("ping", True))),
+                allowed_mentions=discord.AllowedMentions(everyone=True, roles=True, users=True, replied_user=bool(d.get("ping", True))),
                 **kw,
             )
         finally:
@@ -347,11 +360,12 @@ class DashboardBridge(commands.Cog):
             g = self.bot.get_guild(int(d["guild_id"]))
             src = list(g.emojis) if g else []
         else:
-            src = list(self.bot.emojis)[:200]
+            src = list(self.bot.emojis)
         return [
-            {"id": str(e.id), "name": e.name, "animated": e.animated, "url": str(e.url)}
+            {"id": str(e.id), "name": e.name, "animated": e.animated, "url": str(e.url),
+             "guild": e.guild.name if e.guild else ""}
             for e in src if e.available
-        ][:200]
+        ][:1500]
 
     async def _user(self, uid):
         u = self.bot.get_user(uid) or self.user_cache.get(uid)
@@ -388,6 +402,74 @@ class DashboardBridge(commands.Cog):
         dm = u.dm_channel or await u.create_dm()
         _remember_dm(u.id)
         return {"channel_id": str(dm.id), "user": ser_user(u)}
+
+    async def h_guilds(self, d):
+        return {
+            "me": ser_user(self.bot.user),
+            "guilds": [
+                {"id": str(g.id), "name": g.name, "members": g.member_count,
+                 "icon": str(g.icon.with_size(128).url) if g.icon else None}
+                for g in sorted(self.bot.guilds, key=lambda x: x.name.lower())
+            ],
+        }
+
+    async def h_members(self, d):
+        g = self.bot.get_guild(int(d["guild_id"]))
+        if g is None:
+            raise BridgeError("Bot không ở server này")
+        if not g.chunked:
+            try:
+                await asyncio.wait_for(g.chunk(), 8)
+            except Exception:
+                pass
+        rank = {"online": 0, "idle": 1, "dnd": 2}
+        ms = sorted(g.members, key=lambda m: (rank.get(str(m.status), 3), m.display_name.lower()))[:500]
+        out = []
+        for m in ms:
+            u = ser_user(m)
+            u["status"] = str(m.status)
+            u["color"] = m.color.value or None
+            out.append(u)
+        return out
+
+    async def h_profile(self, d):
+        uid = int(d["user_id"])
+        g = self.bot.get_guild(int(d["guild_id"])) if d.get("guild_id") else None
+        m = g.get_member(uid) if g else None
+        if g and m is None:
+            try:
+                m = await g.fetch_member(uid)
+            except Exception:
+                m = None
+        u = await self._user(uid)
+        base = m or u
+        if base is None:
+            raise BridgeError("Không tìm thấy user này")
+        banner = accent = None
+        if u is not None:
+            try:
+                fu = await self.bot.fetch_user(uid)
+                banner = str(fu.banner.with_size(512).url) if fu.banner else None
+                accent = fu.accent_colour.value if fu.accent_colour else None
+            except Exception:
+                pass
+        out = ser_user(base)
+        out.update({
+            "username": (u or base).name,
+            "created": (u or base).created_at.timestamp(),
+            "joined": m.joined_at.timestamp() if m and m.joined_at else None,
+            "status": str(m.status) if m else None,
+            "roles": [{"name": r.name, "color": r.color.value}
+                      for r in reversed(m.roles) if not r.is_default()][:25] if m else [],
+            "banner": banner,
+            "accent": accent,
+        })
+        return out
+
+    async def h_unread(self, d):
+        if d.get("open"):
+            self.unread.pop(str(d["open"]), None)
+        return self.unread
 
 
 async def setup(bot):
