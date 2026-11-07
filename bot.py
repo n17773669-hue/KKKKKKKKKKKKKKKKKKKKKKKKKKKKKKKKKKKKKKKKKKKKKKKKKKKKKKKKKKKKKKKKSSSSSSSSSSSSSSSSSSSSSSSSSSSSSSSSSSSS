@@ -5416,6 +5416,7 @@ async def main():
         await bot.load_extension("fun")
         await bot.load_extension("pingbot")
         await bot.load_extension("gif")
+        await bot.load_extension("database")
         asyncio.create_task(dashboard_stats_loop())
         asyncio.create_task(dashboard_outbox_loop())
         try:
