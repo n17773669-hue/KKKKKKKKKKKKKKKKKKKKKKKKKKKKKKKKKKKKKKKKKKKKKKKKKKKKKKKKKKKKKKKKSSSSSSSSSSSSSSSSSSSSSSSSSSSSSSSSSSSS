@@ -34,8 +34,8 @@ from discord.ext import commands, tasks
 OWNER_ID = 1404399385965498479
 
 CONFIG_FILE = "config.json"
+UPTIME_FILE = "uptime.json"
 DEFAULT_STREAM_URL = "https://www.youtube.com/watch?v=9svI65nxVhc"
-START_TIME = time.time()
 
 STREAM_URL_RE = re.compile(
     r"^https://(www\.)?(twitch\.tv/[A-Za-z0-9_]{3,40}|youtube\.com/watch\?v=[A-Za-z0-9_-]{6,20}|youtu\.be/[A-Za-z0-9_-]{6,20})$"
@@ -63,7 +63,7 @@ PLATFORMS = {
 
 
 # ----------------------------------------------------------------------
-# Tiện ích config
+# Tiện ích config & uptime tích lũy
 # ----------------------------------------------------------------------
 def normalize_stream_url(url):
     """Discord chỉ hiện nút Xem + chấm tím với link dạng youtube.com/watch?v=... hoặc twitch.tv/...
@@ -95,11 +95,24 @@ def save_cfg(updates):
     return cfg
 
 
+def get_total_uptime():
+    """Đọc tổng thời gian tích lũy từ uptime.json giống như trên web."""
+    try:
+        if os.path.exists(UPTIME_FILE):
+            with open(UPTIME_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                total = float(d.get("total_seconds", 0))
+                # Cộng thêm phần chênh lệch nhỏ nếu file được ghi cách đây ít giây
+                gap = max(0.0, min(30.0, time.time() - os.path.getmtime(UPTIME_FILE)))
+                return total + gap
+    except Exception:
+        pass
+    return 0.0
+
+
 # ----------------------------------------------------------------------
 # Patch Gateway identify để hiển thị đúng thiết bị đã chọn
-# Giữ nguyên payload gốc của discord.py (shard, intents, presence...) và chỉ
-# thay "properties", nên không bị lệch phiên bản discord.py.
-# Thiết bị được đọc từ config.json mỗi lần bot đăng nhập (key "platform").
 # ----------------------------------------------------------------------
 def patch_gateway_identify():
     try:
@@ -128,7 +141,6 @@ def patch_gateway_identify():
         try:
             await original_identify(self)
         finally:
-            # bỏ override trên instance, trả về method gốc của class
             self.__dict__.pop("send_as_json", None)
 
     DiscordWebSocket.identify = patched_identify
@@ -171,8 +183,8 @@ def latency_label(ms):
 def render_status(text, *, guilds, members, prefix, ping_ms, ram, uptime_s):
     """Thay các biến {guilds} {members} {prefix} {ping} {ram} {uptime} {latency_status}."""
     out = text.replace("{guilds}", f"{guilds:,}".replace(",", "."))
-    out = out.replace("{members}", f"{members:,}".replace(",", "."))
-    out = out.replace("{prefix}", prefix)
+    out = text.replace("{members}", f"{members:,}".replace(",", "."))
+    out = text.replace("{prefix}", prefix)
     out = re.sub(r"\{ping\}(\s*ms)?", lambda m: f"{ping_ms} ms" if ping_ms is not None else "N/A", out, flags=re.I)
     out = re.sub(r"\{ram\}(\s*MB)?", lambda m: f"{ram} MB" if ram is not None else "N/A", out, flags=re.I)
     out = out.replace("{uptime}", fmt_uptime(uptime_s))
@@ -194,7 +206,6 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
     def cog_unload(self):
         self.rotate.cancel()
 
-    # Chỉ owner mới dùng được mọi slash command trong cog này
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != OWNER_ID:
             raise app_commands.CheckFailure("not owner")
@@ -212,7 +223,6 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
             await interaction.response.send_message(msg, ephemeral=True)
 
     async def sync_tree(self):
-        """Đăng ký slash command lên Discord (1 lần). Nếu bot.py đã tự sync thì có thể bỏ."""
         if self._synced:
             return
         self._synced = True
@@ -237,11 +247,10 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
             prefix=str(cfg.get("prefix", "!")),
             ping_ms=ping,
             ram=ram_mb(),
-            uptime_s=time.time() - START_TIME,
+            uptime_s=get_total_uptime(),  # Lấy tổng thời gian chạy tích lũy từ uptime.json
         )
 
     def apply_now(self):
-        """Áp dụng ngay thay vì chờ vòng lặp kế tiếp."""
         try:
             self.rotate.restart()
         except Exception:
@@ -261,11 +270,10 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
         self.index += 1
 
         status = STATUSES.get(cfg.get("status_mode", "online"), discord.Status.online)
-        # Mặc định force_stream = False: thiếu key trong config thì KHÔNG tự nhảy sang stream
         if cfg.get("force_stream", False) or cfg.get("activity_type") == "streaming":
             activity = discord.Streaming(name=text, url=normalize_stream_url(cfg.get("stream_url") or DEFAULT_STREAM_URL))
             if status is not discord.Status.invisible:
-                status = discord.Status.online  # chấm tím chỉ hiện khi Online
+                status = discord.Status.online
         else:
             kind = ACTIVITY_TYPES.get(cfg.get("activity_type", "playing"), discord.ActivityType.playing)
             activity = discord.Activity(type=kind, name=text)
@@ -412,5 +420,5 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
 async def setup(bot):
     cog = StatusCog(bot)
     await bot.add_cog(cog)
-    if bot.is_ready():  # load muộn sau on_ready thì sync luôn
+    if bot.is_ready():
         await cog.sync_tree()
