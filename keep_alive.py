@@ -67,41 +67,44 @@ def read_activity():
 
 
 # Thời gian online của bot: discord_storage.py cộng dồn vào uptime.json mỗi ~10 giây
-# và backup lên kênh #ksbot-uptime, nên số này không mất khi host deploy lại.
+# và backup lên kênh #ksbot-uptime, nên số tổng này không mất khi host deploy lại.
 UPTIME_FILE = "uptime.json"
 
 
 def read_uptime():
+    """session_seconds = thời gian của LẦN CHẠY HIỆN TẠI, tính từ mốc started_at do dashboard
+    ghi lại khi bật bot. Mốc này cũng được truyền cho status.py (biến môi trường KS_START_TS)
+    nên số trên dashboard và số {uptime} hiện trên Discord luôn giống nhau.
+    total_seconds = tổng cộng dồn qua mọi lần khởi động (đọc từ uptime.json)."""
     out = {"running": False, "session_seconds": None, "total_seconds": None,
            "sessions": None, "longest_session": None, "first_start": None}
     try:
         with open(UPTIME_FILE, "r", encoding="utf-8") as f:
             d = json.load(f)
     except Exception:
-        return out
+        d = {}
     if not isinstance(d, dict):
-        return out
+        d = {}
 
-    running = bot_status()["running"]
-    total = float(d.get("total_seconds", 0))
-    longest = float(d.get("longest_session", 0))
+    st = bot_status()
+    running = st["running"]
+    started_at = st["started_at"]
+    total = float(d.get("total_seconds", 0) or 0)
+    longest = float(d.get("longest_session", 0) or 0)
     session = None
     if running:
-        # file được ghi mỗi ~10s -> cộng thêm phần chênh để số chạy mượt
+        # file được ghi mỗi ~10s -> cộng thêm phần chênh để số tổng chạy mượt
         try:
             gap = max(0.0, min(30.0, time.time() - os.path.getmtime(UPTIME_FILE)))
         except OSError:
             gap = 0.0
         total += gap
-        try:
-            start = datetime.datetime.fromisoformat(d.get("current_session_start"))
-            session = max(0.0, time.time() - start.timestamp())
-        except Exception:
-            session = float(d.get("last_session_seconds", 0))
-        longest = max(longest, session)
+        if started_at:
+            session = max(0.0, time.time() - started_at)
+            longest = max(longest, session)
 
     out.update({
-        "running": running, "session_seconds": session, "total_seconds": total,
+        "running": running, "session_seconds": session, "total_seconds": total if d else None,
         "sessions": d.get("sessions"), "longest_session": longest,
         "first_start": str(d.get("first_start", ""))[:10] or None,
     })
@@ -1097,9 +1100,10 @@ PAGE_JS = """
         fetch('/outbox', { cache: 'no-store' }).then(function (r) { return r.json(); })
             .then(renderOutbox).catch(function () {});
     }
-    // Đồng hồ online LIÊN TỤC: lấy tổng thời gian đã cộng dồn (không reset khi bot khởi động lại)
-    // rồi đếm tiếp từng giây ở trình duyệt; mỗi 10s đồng bộ lại với server.
-    var upBase = null, upBaseAt = 0, upRunning = false;
+    // Đồng hồ online = thời gian của LẦN CHẠY HIỆN TẠI, cùng mốc với {uptime} trên status Discord
+    // (cả hai đều tính từ lúc dashboard bật tiến trình bot). Đếm từng giây ở trình duyệt,
+    // mỗi 10s đồng bộ lại với server. Tổng cộng dồn qua các lần restart hiện ở dòng chú thích.
+    var upBase = null, upBaseAt = 0, upRunning = false, upAllBase = null;
     function fmtClock(sec) {
         sec = Math.max(0, Math.floor(sec));
         var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600),
@@ -1108,23 +1112,21 @@ PAGE_JS = """
     }
     function drawUptime() {
         var el = document.getElementById('upTotal');
-        if (upBase == null) { el.textContent = '—'; return; }
-        var extra = upRunning ? (Date.now() - upBaseAt) / 1000 : 0;
-        el.textContent = fmtClock(upBase + extra);
+        if (!upRunning || upBase == null) { el.textContent = upRunning ? '—' : 'Bot đang tắt'; return; }
+        el.textContent = fmtClock(upBase + (Date.now() - upBaseAt) / 1000);
     }
     function pollUptime() {
         fetch('/uptime', { cache: 'no-store' }).then(function (r) { return r.json(); })
             .then(function (u) {
-                upBase = u.total_seconds != null ? Number(u.total_seconds) : null;
+                upBase = u.session_seconds != null ? Number(u.session_seconds) : null;
+                upAllBase = u.total_seconds != null ? Number(u.total_seconds) : null;
                 upBaseAt = Date.now();
                 upRunning = !!u.running;
                 drawUptime();
                 document.getElementById('upSessions').textContent = u.sessions != null ? num(Math.max(0, u.sessions - 1)) : '—';
                 document.getElementById('upFirst').textContent = u.first_start || '—';
-                document.getElementById('upFoot').textContent = u.first_start
-                    ? (upRunning ? 'Đang đếm tiếp từ tổng thời gian đã lưu, khởi động lại không bị reset' : 'Bot đang tắt, đồng hồ tạm dừng và sẽ đếm tiếp khi bật lại')
-                      + ' • lưu trên kênh Discord nên deploy lại cũng không mất'
-                    : 'Chưa có dữ liệu uptime (bot cần load discord_storage)';
+                document.getElementById('upFoot').textContent = 'Khớp với thời gian "bot đã hoạt động" trên Discord' +
+                    (upAllBase != null ? ' • Tổng cộng dồn từ trước đến nay: ' + fmtClock(upAllBase) + ' (lưu trên kênh Discord nên deploy lại không mất)' : '');
             }).catch(function () {});
     }
     setInterval(drawUptime, 1000);
@@ -1157,7 +1159,7 @@ PAGE_JS = """
     btnRestart.addEventListener('click', function () {
         if (!confirm('Khởi động lại bot? Bot sẽ offline vài giây.')) return;
         fetch('/botctl', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=restart' })
-            .then(function () { notify('Đang khởi động lại bot...'); setTimeout(pollBotState, 1500); });
+            .then(function () { notify('Đang khởi động lại bot...'); setTimeout(pollBotState, 1500); setTimeout(pollUptime, 3000); });
     });
 
     sendBtn.addEventListener('click', function () {
@@ -1292,7 +1294,7 @@ PAGE_JS = """
             snapshot = body.toString();
             refresh();
             notify(d && d.restarted ? 'Đã lưu, bot đang khởi động lại để đổi thiết bị...' : 'Đã lưu cấu hình');
-            if (d && d.restarted) setTimeout(pollBotState, 1500);
+            if (d && d.restarted) { setTimeout(pollBotState, 1500); setTimeout(pollUptime, 3000); }
         }).catch(function (err) {
             notify('Lưu thất bại: ' + err.message, true);
         }).then(function () {
@@ -1542,7 +1544,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                 </div>
                 <p class="ov-foot" id="ovFoot">Đang chờ dữ liệu từ bot...</p>
                 <div class="ov-tiles" style="margin-top:14px">
-                    <div class="ov-tile" style="grid-column: span 2"><span>Bot online liên tục</span><b id="upTotal">—</b></div>
+                    <div class="ov-tile" style="grid-column: span 2"><span>Bot online liên tục (lần chạy này)</span><b id="upTotal">—</b></div>
                     <div class="ov-tile"><span>Số lần khởi động lại</span><b id="upSessions">—</b></div>
                     <div class="ov-tile"><span>Chạy từ ngày</span><b id="upFirst">—</b></div>
                 </div>
@@ -1947,11 +1949,16 @@ def run_bot_forever():
             continue
 
         script = "run_bot.py" if os.path.exists("run_bot.py") else "bot.py"
-        process = subprocess.Popen([sys.executable, script])
+        # Mốc bắt đầu của lần chạy này. Truyền cho status.py qua biến môi trường KS_START_TS
+        # để {uptime} trên Discord và đồng hồ trên dashboard dùng CHUNG một mốc.
+        started = time.time()
+        env = dict(os.environ)
+        env["KS_START_TS"] = repr(started)
+        process = subprocess.Popen([sys.executable, script], env=env)
         with BOT_LOCK:
             BOT_STATE["process"] = process
-            BOT_STATE["started_at"] = time.time()
-        start_time = time.time()
+            BOT_STATE["started_at"] = started
+        start_time = started
         process.wait()
         ran_seconds = time.time() - start_time
         print(f"[BotRunner] {script} đã thoát (mã {process.returncode}) sau {ran_seconds:.1f}s", flush=True)
