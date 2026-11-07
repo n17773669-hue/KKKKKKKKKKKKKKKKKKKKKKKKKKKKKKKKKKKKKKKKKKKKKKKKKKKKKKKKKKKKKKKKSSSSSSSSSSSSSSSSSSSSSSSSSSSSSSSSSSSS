@@ -11,6 +11,7 @@ import uuid
 import sys
 import re
 import os
+import cgi
 
 CONFIG_FILE = "config.json"
 CONFIG_LOCK = threading.Lock()
@@ -21,6 +22,8 @@ CONFIG_LOCK = threading.Lock()
 STATS_FILE = "stats.json"
 STATS_MAX_AGE = 120
 
+CHAT_HISTORY_FILE = "chat_history.json"
+WEB_COMMANDS_FILE = "web_commands.json"
 
 def read_stats():
     out = {
@@ -44,6 +47,33 @@ def read_stats():
         pass
     return out
 
+def read_chat_history(channel_id):
+    if not os.path.exists(CHAT_HISTORY_FILE):
+        return []
+    try:
+        with open(CHAT_HISTORY_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data.get(str(channel_id), [])
+    except Exception:
+        pass
+    return []
+
+def add_web_command(cmd):
+    cmds = []
+    if os.path.exists(WEB_COMMANDS_FILE):
+        try:
+            with open(WEB_COMMANDS_FILE, "r", encoding="utf-8") as f:
+                cmds = json.load(f)
+            if not isinstance(cmds, list):
+                cmds = []
+        except Exception:
+            cmds = []
+    cmds.append(cmd)
+    tmp = WEB_COMMANDS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(cmds, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, WEB_COMMANDS_FILE)
 
 # bot.py (tùy chọn) ghi mảng JSON vào đây mỗi khi có lệnh được dùng, ví dụ:
 # [{"time": 1729999999, "user": "tên#0001", "action": "!help"}, ...]
@@ -180,8 +210,9 @@ DEFAULT_CONFIG = {
     "platform": "ios",
     "stream_url": "https://www.youtube.com/watch?v=9svI65nxVhc",
     "site_title": "KSBot Command Center",
-    "bg_url": "",
-    "bg_dim": 60,
+    # Đã cập nhật mặc định hình nền chuẩn theo ý bạn
+    "bg_url": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQI2Snditi8l1N6o2Js0AKX67zA3EIyAwLYR2RK2yr93A&s=10",
+    "bg_dim": 50,
 }
 
 # Link hình nền chỉ nhận https và không chứa ký tự có thể phá CSS/HTML
@@ -365,7 +396,7 @@ body {
 button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.wrap { max-width: 1080px; margin: 0 auto; padding: 28px 18px 120px; }
+.wrap { max-width: 1200px; margin: 0 auto; padding: 28px 18px 120px; }
 
 .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 26px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 12px; }
@@ -601,32 +632,89 @@ input[type="text"]:focus, input[type="number"]:focus { border-color: var(--accen
 .row-badge.sent { background: rgba(63,195,128,.15); color: var(--ok); }
 .row-badge.error { background: rgba(239,91,107,.15); color: var(--bad); }
 
-/* Gửi tin nhắn */
-textarea.msgtext {
-    width: 100%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
-    padding: 11px 13px; font-size: 14px; outline: none; resize: vertical; min-height: 80px;
+/* Discord Client 3 Cột (Giao diện chuẩn Discord để chat, xem lịch sử, thả icon) */
+.discord-app {
+    display: flex;
+    height: 600px;
+    background: #2b2d31;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    margin-top: 10px;
 }
-textarea.msgtext:focus { border-color: var(--accent); }
-.send-row { display: flex; justify-content: flex-end; margin-top: 10px; }
+.sidebar-servers {
+    width: 72px;
+    background: #1e1f22;
+    padding: 12px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    overflow-y: auto;
+    border-right: 1px solid #111214;
+}
+.server-ico {
+    width: 48px; height: 48px; border-radius: 50%; background: #313338;
+    display: grid; place-items: center; font-weight: 700; cursor: pointer;
+    transition: all .2s; position: relative; color: #dbdee1;
+}
+.server-ico:hover, .server-ico.active { border-radius: 16px; background: #5865f2; color: #fff; }
+.server-ico img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 
-/* Chọn server / kênh bằng nút bấm */
-.pick-label { font-size: 12px; font-weight: 500; color: var(--muted); margin: 0 0 8px; }
-.pick-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
-.pick-btn {
-    display: inline-flex; align-items: center; gap: 7px; max-width: 100%;
-    background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
-    padding: 8px 12px; font-size: 13px; cursor: pointer; color: var(--text);
-    transition: border-color .15s, background .15s;
+.sidebar-channels {
+    width: 220px;
+    background: #2b2d31;
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    border-right: 1px solid #1f2023;
 }
-.pick-btn:hover { border-color: var(--accent); }
-.pick-btn.sel { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.pick-btn .hash { opacity: .6; font-weight: 700; }
-.pick-btn .cat { font-size: 11px; opacity: .6; }
-.pick-empty { font-size: 13px; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
-.pick-chosen { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
-.pick-chosen b { color: var(--text); }
-details.manual { margin-bottom: 14px; }
-details.manual summary { font-size: 12px; color: var(--muted); cursor: pointer; margin-bottom: 8px; }
+.chan-title { font-size: 11px; font-weight: 700; color: #949ba4; text-transform: uppercase; padding: 6px 8px; }
+.chan-item {
+    padding: 8px 10px; border-radius: 6px; color: #949ba4; cursor: pointer;
+    font-size: 14px; display: flex; align-items: center; gap: 8px; transition: background .15s;
+}
+.chan-item:hover, .chan-item.active { background: #35373c; color: #f2f3f5; }
+.chan-item.active { font-weight: 600; }
+
+.chat-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #313338;
+}
+.chat-header {
+    height: 48px; padding: 0 16px; border-bottom: 1px solid #1f2023;
+    display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; color: #f2f3f5;
+}
+.chat-messages {
+    flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;
+}
+.msg-bubble { display: flex; gap: 12px; position: relative; }
+.msg-avatar { width: 40px; height: 40px; border-radius: 50%; background: #5865f2; flex: none; overflow: hidden; }
+.msg-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.msg-main { flex: 1; min-width: 0; }
+.msg-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.msg-user { font-weight: 600; font-size: 14px; color: #f2f3f5; }
+.msg-time { font-size: 11px; color: #949ba4; }
+.msg-text { font-size: 14px; color: #dbdee1; word-break: break-word; }
+.msg-img { max-width: 280px; max-height: 180px; border-radius: 8px; margin-top: 6px; display: block; }
+.msg-reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.react-tag { background: #2b2d31; border: 1px solid #383a40; border-radius: 6px; padding: 2px 6px; font-size: 12px; display: flex; align-items: center; gap: 4px; }
+.msg-actions { display: flex; gap: 6px; margin-top: 6px; }
+.msg-act-btn { background: #2b2d31; border: 1px solid #383a40; color: #b5bac1; padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+.msg-act-btn:hover { background: #35373c; color: #fff; }
+
+.chat-input-box { padding: 12px 16px; background: #313338; }
+.reply-preview { font-size: 12px; color: #b5bac1; background: #2b2d31; padding: 6px 12px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; }
+.chat-input-wrap { display: flex; align-items: center; gap: 8px; background: #383a40; border-radius: 8px; padding: 8px 12px; }
+.chat-input-wrap input[type="text"] { flex: 1; background: transparent; border: none; outline: none; color: #f2f3f5; font-size: 14px; }
+.chat-file-btn { cursor: pointer; color: #b5bac1; font-size: 18px; display: flex; align-items: center; }
+.chat-file-btn:hover { color: #fff; }
+.send-btn-discord { background: #5865f2; color: #fff; border: none; padding: 6px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; }
+.send-btn-discord:hover { background: #4752c4; }
 
 /* Thanh tab chuyển mục */
 .tabs { display: flex; gap: 4px; overflow-x: auto; margin: 0 0 22px; border-bottom: 1px solid var(--line); scrollbar-width: none; }
@@ -650,20 +738,6 @@ body[data-tab="features"] .layout,
 body[data-tab="send"] .layout,
 body[data-tab="servers"] .layout,
 body[data-tab="theme"] .layout { grid-template-columns: minmax(0, 1fr); }
-
-/* Ở tab Tổng quan số liệu đã có ô lớn bên trái, khỏi lặp lại trong khung xem trước */
-body[data-tab="overview"] .preview .stats,
-body[data-tab="overview"] .preview .data-note { display: none; }
-
-/* Ô số liệu lớn + biểu đồ ping */
-.ov-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-@media (max-width: 600px) { .ov-tiles { grid-template-columns: 1fr 1fr; } }
-.ov-tile { background: var(--panel-2); border-radius: 12px; padding: 14px 14px 12px; min-width: 0; }
-.ov-tile span { font-size: 12px; color: var(--muted); }
-.ov-tile b { display: block; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
-.spark { display: block; width: 100%; height: 22px; margin-top: 6px; }
-.spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.6; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
-.ov-foot { font-size: 12px; color: var(--muted); margin-top: 12px; }
 
 /* Hình nền tùy chỉnh: lớp phủ tối + thẻ kính mờ để chữ vẫn dễ đọc */
 body.has-bg {
@@ -690,8 +764,6 @@ body.has-bg .card { background: rgba(21,25,35,.78); -webkit-backdrop-filter: blu
 .pg:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .pg:disabled { opacity: .4; cursor: not-allowed; }
 .err-reason { color: var(--bad) !important; margin-top: 2px; }
-
-.sub-label { margin-top: 16px; }
 
 @media (prefers-reduced-motion: reduce) {
     * { animation: none !important; transition: none !important; }
@@ -727,114 +799,204 @@ PAGE_JS = """
     var btnStart = document.getElementById('btnStart');
     var btnStop = document.getElementById('btnStop');
     var btnRestart = document.getElementById('btnRestart');
-    var chIdInput = document.getElementById('chId');
-    var msgContent = document.getElementById('msgContent');
-    var sendBtn = document.getElementById('sendBtn');
-    var guildPick = document.getElementById('guildPick');
-    var chanPick = document.getElementById('chanPick');
-    var pickChosen = document.getElementById('pickChosen');
-    var manualBox = document.getElementById('manualBox');
+    
+    // Biến cho Discord Client 3 cột
+    var serverList = document.getElementById('serverList');
+    var chanList = document.getElementById('chanList');
+    var chatMsgs = document.getElementById('chatMsgs');
+    var currentChanTitle = document.getElementById('currentChanTitle');
+    var webMsgInput = document.getElementById('webMsgInput');
+    var fileInput = document.getElementById('fileInput');
+    var webSendBtn = document.getElementById('webSendBtn');
+    var replyBar = document.getElementById('replyBar');
+    var replyText = document.getElementById('replyText');
+    var cancelReply = document.getElementById('cancelReply');
+
+    var serversData = [];
+    var currentGuild = null;
+    var currentChan = null;
+    var replyToId = null;
+
     var siteTitle = document.getElementById('siteTitle');
     var bgUrl = document.getElementById('bgUrl');
     var bgDim = document.getElementById('bgDim');
     var bgDimVal = document.getElementById('bgDimVal');
     var bgPrev = document.getElementById('bgPrev');
-    var pickData = [];
-    var selGuild = null, selChan = null, selChanName = '';
 
-    function loadLast() {
-        try { return JSON.parse(localStorage.getItem('ks_last_channel') || 'null') || {}; }
-        catch (e) { return {}; }
-    }
-    function saveLast() {
-        try { localStorage.setItem('ks_last_channel', JSON.stringify({ guild: selGuild, chan: selChan })); }
-        catch (e) {}
-    }
-    function mkBtn(label, prefix, selected, onClick) {
-        var b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'pick-btn' + (selected ? ' sel' : '');
-        if (prefix) {
-            var h = document.createElement('span');
-            h.className = 'hash';
-            h.textContent = prefix;
-            b.appendChild(h);
+    function renderServers(list) {
+        serversData = list || [];
+        if (!serverList) return;
+        serverList.innerHTML = '';
+        
+        var dmBtn = document.createElement('div');
+        dmBtn.className = 'server-ico' + (currentGuild === 'DM' ? ' active' : '');
+        dmBtn.textContent = '💬';
+        dmBtn.title = 'Direct Messages';
+        dmBtn.onclick = function() {
+            currentGuild = 'DM';
+            currentChan = null;
+            renderServers(serversData);
+            renderChannels([]);
+        };
+        serverList.appendChild(dmBtn);
+
+        serversData.forEach(function(g) {
+            var el = document.createElement('div');
+            el.className = 'server-ico' + (String(g.id) === String(currentGuild) ? ' active' : '');
+            if (g.icon) {
+                el.innerHTML = '<img src="' + g.icon + '" alt="">';
+            } else {
+                el.textContent = (g.name || '?').charAt(0).toUpperCase();
+            }
+            el.title = g.name;
+            el.onclick = function() {
+                currentGuild = g.id;
+                currentChan = (g.channels && g.channels.length) ? g.channels[0].id : null;
+                renderServers(serversData);
+                renderChannels(g.channels || []);
+            };
+            serverList.appendChild(el);
+        });
+
+        if (currentGuild == null && serversData.length > 0) {
+            currentGuild = serversData[0].id;
+            currentChan = (serversData[0].channels && serversData[0].channels.length) ? serversData[0].channels[0].id : null;
+            renderServers(serversData);
+            renderChannels(serversData[0].channels || []);
         }
-        b.appendChild(document.createTextNode(label));
-        b.addEventListener('click', onClick);
-        return b;
     }
-    function updateChosen() {
-        var g = pickData.filter(function (x) { return String(x.id) === String(selGuild); })[0];
-        if (selChan) {
-            pickChosen.innerHTML = 'Gửi tới: <b></b>';
-            pickChosen.querySelector('b').textContent = '#' + selChanName + (g ? ' • ' + g.name : '');
-        } else if (chIdInput.value.trim()) {
-            pickChosen.innerHTML = 'Gửi tới kênh ID: <b></b>';
-            pickChosen.querySelector('b').textContent = chIdInput.value.trim();
-        } else {
-            pickChosen.textContent = 'Chưa chọn kênh nào';
-        }
-    }
-    function renderPicker(list) {
-        pickData = (list || []).filter(function (g) { return g && g.id != null; });
-        guildPick.innerHTML = '';
-        chanPick.innerHTML = '';
-        if (!pickData.length) {
-            var e = document.createElement('div');
-            e.className = 'pick-empty';
-            e.textContent = 'Bot chưa gửi danh sách server/kênh lên stats.json. Tạm thời nhập ID kênh thủ công bên dưới.';
-            guildPick.appendChild(e);
-            manualBox.open = true;
+
+    function renderChannels(channels) {
+        if (!chanList) return;
+        chanList.innerHTML = '';
+        if (currentGuild === 'DM') {
+            chanList.innerHTML = '<div class="chan-title">Nhập User ID để DM</div>';
+            var dmInput = document.createElement('input');
+            dmInput.type = 'text';
+            dmInput.placeholder = 'Dán User ID vào đây...';
+            dmInput.style.cssText = 'width:100%;padding:8px;background:#1e1f22;border:1px solid #383a40;border-radius:6px;color:#fff;font-size:13px;';
+            dmInput.onchange = function() {
+                currentChan = dmInput.value.trim();
+                currentChanTitle.textContent = '@ User (' + currentChan + ')';
+                fetchChatHistory();
+            };
+            chanList.appendChild(dmInput);
             return;
         }
-        if (selGuild == null) {
-            var last = loadLast();
-            var found = pickData.filter(function (g) { return String(g.id) === String(last.guild); })[0];
-            selGuild = (found || pickData[0]).id;
-            if (found && last.chan) {
-                var ch = (found.channels || []).filter(function (c) { return String(c.id) === String(last.chan); })[0];
-                if (ch) { selChan = ch.id; selChanName = ch.name; chIdInput.value = ch.id; }
-            }
-        }
-        var row = document.createElement('div');
-        row.className = 'pick-row';
-        pickData.forEach(function (g) {
-            row.appendChild(mkBtn(g.name || 'Không tên', '', String(g.id) === String(selGuild), function () {
-                selGuild = g.id; selChan = null; selChanName = '';
-                renderPicker(pickData); updateChosen();
-            }));
-        });
-        guildPick.appendChild(row);
 
-        var cur = pickData.filter(function (g) { return String(g.id) === String(selGuild); })[0];
-        var chans = (cur && cur.channels) || [];
-        if (!chans.length) {
-            var e2 = document.createElement('div');
-            e2.className = 'pick-empty';
-            e2.textContent = 'Server này chưa có danh sách kênh. Nhập ID thủ công bên dưới.';
-            chanPick.appendChild(e2);
-            manualBox.open = true;
-        } else {
-            var row2 = document.createElement('div');
-            row2.className = 'pick-row';
-            chans.forEach(function (c) {
-                row2.appendChild(mkBtn(c.name, '#', String(c.id) === String(selChan), function () {
-                    selChan = c.id; selChanName = c.name;
-                    chIdInput.value = c.id;
-                    saveLast();
-                    renderPicker(pickData); updateChosen();
-                }));
-            });
-            chanPick.appendChild(row2);
-        }
-        updateChosen();
+        chanList.innerHTML = '<div class="chan-title">Kênh Văn Bản</div>';
+        channels.forEach(function(c) {
+            var el = document.createElement('div');
+            el.className = 'chan-item' + (String(c.id) === String(currentChan) ? ' active' : '');
+            el.innerHTML = '<span>#</span> ' + c.name;
+            el.onclick = function() {
+                currentChan = c.id;
+                currentChanTitle.textContent = '# ' + c.name;
+                renderChannels(channels);
+                fetchChatHistory();
+            };
+            chanList.appendChild(el);
+        });
+
+        if (currentChan) fetchChatHistory();
     }
-    chIdInput.addEventListener('input', function () {
-        selChan = null; selChanName = '';
-        renderPicker(pickData);
-        updateChosen();
-    });
+
+    function fetchChatHistory() {
+        if (!currentChan || !chatMsgs) return;
+        fetch('/api/chat/' + currentChan, { cache: 'no-store' })
+            .then(function(r) { return r.json(); })
+            .then(function(msgs) { renderMessages(msgs); })
+            .catch(function(){});
+    }
+
+    function renderMessages(list) {
+        if (!chatMsgs) return;
+        chatMsgs.innerHTML = '';
+        if (!list || !list.length) {
+            chatMsgs.innerHTML = '<div style="color:#949ba4;text-align:center;margin-top:40px;">Chưa có tin nhắn nào trong cache kênh này.</div>';
+            return;
+        }
+
+        list.forEach(function(m) {
+            var bubble = document.createElement('div');
+            bubble.className = 'msg-bubble';
+            
+            var avt = m.avatar ? '<img src="' + m.avatar + '">' : '🤖';
+            var imgs = (m.attachments || []).map(function(u){ return '<img src="' + u + '" class="msg-img">'; }).join('');
+            var reactTags = (m.reactions || []).map(function(r){ return '<span class="react-tag">' + r.emoji + ' ' + r.count + '</span>'; }).join('');
+
+            bubble.innerHTML = 
+                '<div class="msg-avatar">' + avt + '</div>' +
+                '<div class="msg-main">' +
+                    '<div class="msg-meta"><span class="msg-user">' + (m.author || 'User') + '</span><span class="msg-time">' + (m.timestamp || '') + '</span></div>' +
+                    '<div class="msg-text">' + (m.content || '') + '</div>' +
+                    imgs +
+                    '<div class="msg-reactions">' + reactTags + '</div>' +
+                    '<div class="msg-actions">' +
+                        '<button class="msg-act-btn" onclick="setReply(\'' + m.id + '\', \'' + (m.author||'') + '\')">Reply</button>' +
+                        '<button class="msg-act-btn" onclick="sendReact(\'' + m.id + '\', \'❤️\')">❤️</button>' +
+                        '<button class="msg-act-btn" onclick="sendReact(\'' + m.id + '\', \'👍\')">👍</button>' +
+                        '<button class="msg-act-btn" onclick="sendReact(\'' + m.id + '\', \'😂\')">😂</button>' +
+                        '<button class="msg-act-btn" onclick="sendReact(\'' + m.id + '\', \'🔥\')">🔥</button>' +
+                    '</div>' +
+                '</div>';
+            chatMsgs.appendChild(bubble);
+        });
+        chatMsgs.scrollTop = chatMsgs.scrollHeight;
+    }
+
+    window.setReply = function(id, author) {
+        replyToId = id;
+        replyText.textContent = 'Đang trả lời ' + author;
+        replyBar.style.display = 'flex';
+    };
+
+    if (cancelReply) {
+        cancelReply.onclick = function() {
+            replyToId = null;
+            replyBar.style.display = 'none';
+        };
+    }
+
+    window.sendReact = function(msgId, emoji) {
+        if (!currentChan) return;
+        fetch('/api/react', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ channel_id: currentChan, message_id: msgId, emoji: emoji })
+        }).then(function() { notify('Đã gửi lệnh thả icon!'); });
+    };
+
+    if (webSendBtn) {
+        webSendBtn.onclick = function() {
+            var txt = webMsgInput.value.trim();
+            var file = fileInput.files[0];
+            if (!currentChan || (!txt && !file)) {
+                notify('Hãy chọn kênh và nhập nội dung/file!', true);
+                return;
+            }
+
+            var fd = new FormData();
+            fd.append('channel_id', currentChan);
+            fd.append('content', txt);
+            if (replyToId) fd.append('reply_to', replyToId);
+            if (file) fd.append('file', file);
+
+            webSendBtn.disabled = true;
+            fetch('/api/send', { method: 'POST', body: fd })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    webMsgInput.value = '';
+                    fileInput.value = '';
+                    if (replyBar) replyBar.style.display = 'none';
+                    replyToId = null;
+                    notify('Đã đưa tin nhắn vào hàng chờ!');
+                    setTimeout(fetchChatHistory, 1000);
+                })
+                .catch(function(err) { notify('Lỗi gửi tin', true); })
+                .then(function() { webSendBtn.disabled = false; });
+        };
+    }
 
     var COLORS = { online: '#3fc380', idle: '#f5b942', dnd: '#ef5b6b', invisible: '#5c6370', stream: '#9b59ff' };
     var LABELS = { online: 'Trực tuyến', idle: 'Chờ', dnd: 'Đừng làm phiền', invisible: 'Ẩn (nhìn như offline)', stream: 'Đang stream' };
@@ -898,7 +1060,6 @@ PAGE_JS = """
             .replace(/\\{ram\\}(\\s*MB)?/gi, function (_m, suf) {
                 return liveStats.ram_mb != null ? liveStats.ram_mb + (suf || ' MB') : 'N/A';
             })
-            // Nếu người dùng đã tự gõ "ms" sau {ping} thì giữ nguyên, tránh ra "240 msms"
             .replace(/\\{ping\\}(\\s*ms)?/gi, function (_m, suf) {
                 return liveStats.ping_ms != null ? liveStats.ping_ms + (suf || ' ms') : 'N/A';
             })
@@ -941,46 +1102,8 @@ PAGE_JS = """
         dataNote.className = 'data-note' + (liveStats.live ? ' live' : '');
         dataNote.querySelector('span').textContent = liveStats.live ? 'Dữ liệu trực tiếp từ bot' : 'Số liệu minh họa';
         applyIdentity();
-        applyOverview();
     }
 
-    // Ô số liệu lớn ở tab Tổng quan + biểu đồ ping nhỏ (giữ 30 lần đo gần nhất)
-    var pingHist = [];
-    function applyOverview() {
-        var L = liveStats;
-        function put(id, v, suffix) {
-            document.getElementById(id).textContent = v == null ? '—' : (num(v) || v) + (suffix || '');
-        }
-        put('ovGuilds', L.guilds); put('ovMembers', L.members);
-        put('ovRam', L.ram_mb, ' MB'); put('ovPing', L.ping_ms, ' ms');
-        document.getElementById('ovFoot').textContent = L.live
-            ? 'Dữ liệu trực tiếp từ bot • cập nhật ' + timeAgo(L.updated_at)
-            : 'Bot chưa gửi dữ liệu mới, số liệu có thể đã cũ hoặc trống';
-    }
-    function pushPing() {
-        if (liveStats.ping_ms == null) return;
-        pingHist.push(liveStats.ping_ms);
-        if (pingHist.length > 30) pingHist.shift();
-        var svg = document.getElementById('ovSpark');
-        if (pingHist.length < 2) { svg.innerHTML = ''; return; }
-        var lo = Math.min.apply(null, pingHist), hi = Math.max.apply(null, pingHist);
-        var span = Math.max(1, hi - lo);
-        var pts = pingHist.map(function (v, i) {
-            var x = (i / (pingHist.length - 1)) * 100;
-            var y = 20 - ((v - lo) / span) * 18;
-            return x.toFixed(1) + ',' + y.toFixed(1);
-        }).join(' ');
-        svg.innerHTML = '<polyline points="' + pts + '"/>';
-    }
-    function fmtDur(sec) {
-        sec = Math.max(0, Math.round(sec));
-        if (sec < 60) return sec + ' giây';
-        if (sec < 3600) return Math.floor(sec / 60) + ' phút';
-        if (sec < 86400) return Math.floor(sec / 3600) + ' giờ ' + Math.floor((sec % 3600) / 60) + ' phút';
-        return Math.floor(sec / 86400) + ' ngày ' + Math.floor((sec % 86400) / 3600) + ' giờ';
-    }
-
-    // Avatar + tên thật của bot (bot.py gửi lên stats.json)
     var avatarEl = document.getElementById('avatar');
     var pnameText = document.getElementById('pnameText');
     var brandMark = document.getElementById('brandMark');
@@ -996,7 +1119,7 @@ PAGE_JS = """
             var img = document.createElement('img');
             img.alt = '';
             img.onload = function () { box.innerHTML = ''; box.appendChild(img); };
-            img.src = url;  // chỉ thay icon mẫu sau khi ảnh tải xong, lỗi thì giữ icon cũ
+            img.src = url;
         });
     }
 
@@ -1004,18 +1127,6 @@ PAGE_JS = """
         var d = document.createElement('div');
         d.textContent = s == null ? '' : String(s);
         return d.innerHTML.replace(/"/g, '&quot;');
-    }
-    function chanLabel(id) {
-        for (var i = 0; i < pickData.length; i++) {
-            var cs = pickData[i].channels || [];
-            for (var k = 0; k < cs.length; k++) {
-                if (String(cs[k].id) === String(id)) return '#' + cs[k].name + ' • ' + pickData[i].name;
-            }
-        }
-        return '#' + id;
-    }
-    function emptyState(title, hint) {
-        return '<div class="list-empty"><b>' + esc(title) + '</b>' + esc(hint) + '</div>';
     }
     function timeAgo(ts) {
         if (!ts) return '';
@@ -1032,8 +1143,9 @@ PAGE_JS = """
         drawGuilds();
     }
     function drawGuilds() {
+        if (!guildRows) return;
         if (!guildData.length) {
-            guildRows.innerHTML = emptyState('Chưa có dữ liệu', 'Cần bot.py gửi guild_list lên stats.json để hiện danh sách thật.');
+            guildRows.innerHTML = '<div class="list-empty"><b>Chưa có dữ liệu</b>Cần bot.py gửi guild_list lên stats.json.</div>';
             return;
         }
         var pages = Math.ceil(guildData.length / GUILD_PER_PAGE);
@@ -1050,8 +1162,7 @@ PAGE_JS = """
         }).join('') + '</div>';
         if (pages > 1) {
             out += '<div class="pager"><button type="button" class="pg" id="pgPrev"' + (guildPage === 0 ? ' disabled' : '') +
-                '>‹ Trước</button><span>Trang ' + (guildPage + 1) + ' / ' + pages + ' • ' + guildData.length +
-                ' server</span><button type="button" class="pg" id="pgNext"' + (guildPage >= pages - 1 ? ' disabled' : '') +
+                '>‹ Trước</button><span>Trang ' + (guildPage + 1) + ' / ' + pages + '</span><button type="button" class="pg" id="pgNext"' + (guildPage >= pages - 1 ? ' disabled' : '') +
                 '>Sau ›</button></div>';
         }
         guildRows.innerHTML = out;
@@ -1061,8 +1172,9 @@ PAGE_JS = """
     }
 
     function renderActivity(list) {
+        if (!activityRows) return;
         if (!list || !list.length) {
-            activityRows.innerHTML = emptyState('Chưa có hoạt động nào', 'Cần bot.py ghi log lệnh vào activity.json để hiện ở đây.');
+            activityRows.innerHTML = '<div class="list-empty"><b>Chưa có hoạt động nào</b>Cần bot.py ghi log lệnh vào activity.json.</div>';
             return;
         }
         activityRows.innerHTML = '<div class="rows">' + list.map(function (a) {
@@ -1071,34 +1183,23 @@ PAGE_JS = """
         }).join('') + '</div>';
     }
 
-    function renderOutbox(list) {
-        if (!list || !list.length) { outboxRows.innerHTML = ''; return; }
-        var badge = { pending: 'Đang chờ', sent: 'Đã gửi', error: 'Lỗi' };
-        outboxRows.innerHTML = list.map(function (j) {
-            var st = j.status || 'pending';
-            var why = (st === 'error' && j.error) ? '<small class="err-reason">' + esc(j.error) + '</small>' : '';
-            return '<div class="row-item"><div class="main"><div><b>' + esc(chanLabel(j.channel_id)) +
-                '</b><small>' + esc((j.content || '').slice(0, 60)) + '</small>' + why + '</div></div>' +
-                '<span class="row-badge ' + esc(st) + '">' + esc(badge[st] || st) + '</span></div>';
-        }).join('');
-    }
-
     function pollStats() {
         fetch('/stats', { cache: 'no-store' })
             .then(function (r) { return r.json(); })
-            .then(function (d) { liveStats = d; applyStats(); pushPing(); showMsg(); renderGuilds(d.guild_list); renderPicker(d.guild_list); })
-            .catch(function () { /* bot có thể chưa gửi dữ liệu, bỏ qua lần này */ });
+            .then(function (d) { 
+                liveStats = d; 
+                applyStats(); 
+                showMsg(); 
+                renderGuilds(d.guild_list); 
+                renderServers(d.guild_list);
+            })
+            .catch(function () {});
     }
     function pollActivity() {
         fetch('/activity', { cache: 'no-store' }).then(function (r) { return r.json(); })
             .then(renderActivity).catch(function () {});
     }
-    function pollOutbox() {
-        fetch('/outbox', { cache: 'no-store' }).then(function (r) { return r.json(); })
-            .then(renderOutbox).catch(function () {});
-    }
-    // Đồng hồ online LIÊN TỤC: lấy tổng thời gian đã cộng dồn (không reset khi bot khởi động lại)
-    // rồi đếm tiếp từng giây ở trình duyệt; mỗi 10s đồng bộ lại với server.
+    
     var upBase = null, upBaseAt = 0, upRunning = false;
     function fmtClock(sec) {
         sec = Math.max(0, Math.floor(sec));
@@ -1108,7 +1209,7 @@ PAGE_JS = """
     }
     function drawUptime() {
         var el = document.getElementById('upTotal');
-        if (upBase == null) { el.textContent = '—'; return; }
+        if (!el || upBase == null) return;
         var extra = upRunning ? (Date.now() - upBaseAt) / 1000 : 0;
         el.textContent = fmtClock(upBase + extra);
     }
@@ -1119,69 +1220,37 @@ PAGE_JS = """
                 upBaseAt = Date.now();
                 upRunning = !!u.running;
                 drawUptime();
-                document.getElementById('upSessions').textContent = u.sessions != null ? num(Math.max(0, u.sessions - 1)) : '—';
-                document.getElementById('upFirst').textContent = u.first_start || '—';
-                document.getElementById('upFoot').textContent = u.first_start
-                    ? (upRunning ? 'Đang đếm tiếp từ tổng thời gian đã lưu, khởi động lại không bị reset' : 'Bot đang tắt, đồng hồ tạm dừng và sẽ đếm tiếp khi bật lại')
-                      + ' • lưu trên kênh Discord nên deploy lại cũng không mất'
-                    : 'Chưa có dữ liệu uptime (bot cần load discord_storage)';
             }).catch(function () {});
     }
     setInterval(drawUptime, 1000);
+
     function pollBotState() {
         fetch('/botctl', { cache: 'no-store' }).then(function (r) { return r.json(); })
             .then(function (d) {
+                if (!botState) return;
                 botState.className = 'botctl-state ' + (d.running ? 'on' : 'off');
-                var cool = d.cooldown_until ? Math.ceil((d.cooldown_until - Date.now() / 1000) / 60) : 0;
-                botState.querySelector('span').textContent = d.running
-                    ? 'Bot đang chạy' + (d.started_at ? ' • đã chạy ' + fmtDur(Date.now() / 1000 - d.started_at) : '')
-                    : (cool > 0 ? 'Discord đang chặn IP, tự thử lại sau ~' + cool + ' phút' : 'Bot đã dừng');
-                btnStart.disabled = d.running;
-                btnStop.disabled = !d.running;
-                btnRestart.disabled = !d.running;
+                botState.querySelector('span').textContent = d.running ? 'Bot đang chạy' : 'Bot đã dừng';
+                if (btnStart) btnStart.disabled = d.running;
+                if (btnStop) btnStop.disabled = !d.running;
+                if (btnRestart) btnRestart.disabled = !d.running;
             })
-            .catch(function () {
-                botState.className = 'botctl-state off';
-                botState.querySelector('span').textContent = 'Không kiểm tra được';
-            });
+            .catch(function () {});
     }
 
-    btnStart.addEventListener('click', function () {
+    if (btnStart) btnStart.addEventListener('click', function () {
         fetch('/botctl', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=start' })
             .then(pollBotState).then(function () { notify('Đã bật bot'); });
     });
-    btnStop.addEventListener('click', function () {
+    if (btnStop) btnStop.addEventListener('click', function () {
         fetch('/botctl', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=stop' })
             .then(pollBotState).then(function () { notify('Đã tắt bot'); });
     });
-    btnRestart.addEventListener('click', function () {
-        if (!confirm('Khởi động lại bot? Bot sẽ offline vài giây.')) return;
+    if (btnRestart) btnRestart.addEventListener('click', function () {
+        if (!confirm('Khởi động lại bot?')) return;
         fetch('/botctl', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'action=restart' })
             .then(function () { notify('Đang khởi động lại bot...'); setTimeout(pollBotState, 1500); });
     });
 
-    sendBtn.addEventListener('click', function () {
-        var ch = chIdInput.value.trim();
-        var txt = msgContent.value.trim();
-        if (!ch || !txt) { notify('Chọn kênh và nhập nội dung trước đã', true); return; }
-        sendBtn.disabled = true;
-        sendBtn.textContent = 'Đang gửi...';
-        fetch('/send-message', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'channel_id=' + encodeURIComponent(ch) + '&content=' + encodeURIComponent(txt)
-        }).then(function (r) { return r.json(); })
-            .then(function (d) {
-                if (!d.ok) throw new Error(d.error || 'Lỗi không rõ');
-                msgContent.value = '';
-                notify('Đã đưa vào hàng chờ gửi');
-                pollOutbox();
-            })
-            .catch(function (err) { notify('Gửi thất bại: ' + err.message, true); })
-            .then(function () { sendBtn.disabled = false; sendBtn.textContent = 'Gửi tin nhắn'; });
-    });
-
-    // Hình nền, tên dashboard: xem ngay khi chỉnh, chưa lưu thì chưa giữ lại
     var BG_OK = /^https:\\/\\/[^\\s"'()<>\\\\]{4,480}$/;
     function applyTheme() {
         var root = document.documentElement;
@@ -1189,33 +1258,36 @@ PAGE_JS = """
         if (BG_OK.test(u)) {
             root.style.setProperty('--bg-img', 'url("' + u + '")');
             document.body.classList.add('has-bg');
-            bgPrev.style.backgroundImage = 'url("' + u + '")';
+            if (bgPrev) bgPrev.style.backgroundImage = 'url("' + u + '")';
         } else {
             document.body.classList.remove('has-bg');
-            bgPrev.style.backgroundImage = 'none';
+            if (bgPrev) bgPrev.style.backgroundImage = 'none';
         }
         root.style.setProperty('--dim', String(bgDim.value / 100));
-        bgDimVal.textContent = bgDim.value + '%';
+        if (bgDimVal) bgDimVal.textContent = bgDim.value + '%';
         var t = siteTitle.value.trim() || 'KSBot Command Center';
-        document.getElementById('siteH1').textContent = t;
+        var sh1 = document.getElementById('siteH1');
+        if (sh1) sh1.textContent = t;
         document.title = t;
     }
     [siteTitle, bgUrl, bgDim].forEach(function (el) {
-        el.addEventListener('input', function () { refresh(); });
+        if (el) el.addEventListener('input', function () { refresh(); });
     });
-    document.getElementById('streamUrl').addEventListener('input', function () { refresh(); });
-    document.getElementById('bgClear').addEventListener('click', function () { bgUrl.value = ''; refresh(); });
+    var stUrl = document.getElementById('streamUrl');
+    if (stUrl) stUrl.addEventListener('input', function () { refresh(); });
+    var bgCl = document.getElementById('bgClear');
+    if (bgCl) bgCl.addEventListener('click', function () { bgUrl.value = ''; refresh(); });
 
     function refresh() {
         applyTheme();
         document.documentElement.style.setProperty('--accent', getAccent());
         var mode = getMode();
-        dot.style.background = COLORS[mode];
-        pstate.textContent = LABELS[mode];
-        delayVal.textContent = delayInput.value + ' giây';
-        prefixDemo.textContent = (prefixInput.value || '!') + 'help';
-        offNote.style.display = statusSwitch.checked ? 'none' : 'block';
-        saveBar.classList.toggle('show', serialize().toString() !== snapshot);
+        if (dot) dot.style.background = COLORS[mode];
+        if (pstate) pstate.textContent = LABELS[mode];
+        if (delayVal) delayVal.textContent = delayInput.value + ' giây';
+        if (prefixDemo) prefixDemo.textContent = (prefixInput.value || '!') + 'help';
+        if (offNote) offNote.style.display = statusSwitch.checked ? 'none' : 'block';
+        if (saveBar) saveBar.classList.toggle('show', serialize().toString() !== snapshot);
     }
 
     function onChange() { showMsg(); refresh(); }
@@ -1237,17 +1309,24 @@ PAGE_JS = """
         return row;
     }
 
-    msgBox.querySelectorAll('.msg-row').forEach(bindRow);
-    document.getElementById('addMsg').addEventListener('click', function () {
-        addRow('').querySelector('input').focus();
-        refresh();
-    });
+    if (msgBox) {
+        msgBox.querySelectorAll('.msg-row').forEach(bindRow);
+        var addMsgBtn = document.getElementById('addMsg');
+        if (addMsgBtn) {
+            addMsgBtn.addEventListener('click', function () {
+                addRow('').querySelector('input').focus();
+                refresh();
+            });
+        }
+    }
 
     var lastFocus = null;
-    msgBox.addEventListener('focusin', function (e) { if (e.target.tagName === 'INPUT') lastFocus = e.target; });
+    if (msgBox) {
+        msgBox.addEventListener('focusin', function (e) { if (e.target.tagName === 'INPUT') lastFocus = e.target; });
+    }
     document.querySelectorAll('.chip').forEach(function (chip) {
         chip.addEventListener('click', function () {
-            var t = lastFocus || msgBox.querySelector('input');
+            var t = lastFocus || (msgBox ? msgBox.querySelector('input') : null);
             if (!t) return;
             var s = t.selectionStart == null ? t.value.length : t.selectionStart;
             var e = t.selectionEnd == null ? s : t.selectionEnd;
@@ -1258,52 +1337,58 @@ PAGE_JS = """
         });
     });
 
-    document.getElementById('allOn').addEventListener('click', function () { setAll(true); });
-    document.getElementById('allOff').addEventListener('click', function () { setAll(false); });
+    var allOnBtn = document.getElementById('allOn');
+    if (allOnBtn) allOnBtn.addEventListener('click', function () { setAll(true); });
+    var allOffBtn = document.getElementById('allOff');
+    if (allOffBtn) allOffBtn.addEventListener('click', function () { setAll(false); });
     function setAll(v) {
         form.querySelectorAll('.mod input[type=checkbox]').forEach(function (c) { c.checked = v; });
         refresh();
     }
 
-    form.addEventListener('change', onChange);
-    prefixInput.addEventListener('input', function () { showMsg(); refresh(); });
-    delayInput.addEventListener('input', function () { refresh(); });
-    delayInput.addEventListener('change', restartPreview);
+    if (form) form.addEventListener('change', onChange);
+    if (prefixInput) prefixInput.addEventListener('input', function () { showMsg(); refresh(); });
+    if (delayInput) {
+        delayInput.addEventListener('input', function () { refresh(); });
+        delayInput.addEventListener('change', restartPreview);
+    }
 
     function notify(text, isErr) {
+        if (!toast) return;
         toast.textContent = text;
         toast.className = 'toast show' + (isErr ? ' err' : '');
         setTimeout(function () { toast.className = 'toast' + (isErr ? ' err' : ''); }, 2600);
     }
 
-    form.addEventListener('submit', function (e) {
-        e.preventDefault();
-        saveBtn.disabled = true;
-        saveBtn.textContent = 'Đang lưu...';
-        var body = serialize();
-        fetch('/save', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'fetch' },
-            body: body.toString()
-        }).then(function (r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-        }).then(function (d) {
-            snapshot = body.toString();
-            refresh();
-            notify(d && d.restarted ? 'Đã lưu, bot đang khởi động lại để đổi thiết bị...' : 'Đã lưu cấu hình');
-            if (d && d.restarted) setTimeout(pollBotState, 1500);
-        }).catch(function (err) {
-            notify('Lưu thất bại: ' + err.message, true);
-        }).then(function () {
-            saveBtn.disabled = false;
-            saveBtn.textContent = 'Lưu thay đổi';
+    if (form) {
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Đang lưu...';
+            var body = serialize();
+            fetch('/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'fetch' },
+                body: body.toString()
+            }).then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            }).then(function (d) {
+                snapshot = body.toString();
+                refresh();
+                notify(d && d.restarted ? 'Đã lưu, bot đang khởi động lại...' : 'Đã lưu cấu hình');
+                if (d && d.restarted) setTimeout(pollBotState, 1500);
+            }).catch(function (err) {
+                notify('Lưu thất bại: ' + err.message, true);
+            }).then(function () {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Lưu thay đổi';
+            });
         });
-    });
+    }
 
-    resetBtn.addEventListener('click', function () { location.reload(); });
+    if (resetBtn) resetBtn.addEventListener('click', function () { location.reload(); });
 
-    // Chuyển tab (nhớ tab đang xem bằng #hash trên địa chỉ)
     var TABS = ['overview', 'config', 'features', 'send', 'servers', 'theme'];
     function setTab(name) {
         if (TABS.indexOf(name) < 0) name = 'overview';
@@ -1327,14 +1412,13 @@ PAGE_JS = """
     applyStats();
     pollStats();
     pollActivity();
-    pollOutbox();
     pollBotState();
     pollUptime();
     setInterval(pollStats, 10000);
     setInterval(pollActivity, 15000);
-    setInterval(pollOutbox, 8000);
     setInterval(pollBotState, 8000);
     setInterval(pollUptime, 10000);
+    setInterval(fetchChatHistory, 3000);
 })();
 """
 
@@ -1375,7 +1459,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         <button type="button" class="tab on" role="tab" data-tab="overview">Tổng quan</button>
         <button type="button" class="tab" role="tab" data-tab="config">Cấu hình &amp; Status</button>
         <button type="button" class="tab" role="tab" data-tab="features">Tính năng</button>
-        <button type="button" class="tab" role="tab" data-tab="send">Gửi tin nhắn</button>
+        <button type="button" class="tab" role="tab" data-tab="send">Gửi tin nhắn &amp; Chat</button>
         <button type="button" class="tab" role="tab" data-tab="servers">Server</button>
         <button type="button" class="tab" role="tab" data-tab="theme">Giao diện</button>
     </nav>
@@ -1397,7 +1481,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 
             <section class="card" data-show="theme">
                 <h2>Giao diện dashboard</h2>
-                <p class="sub">Đổi tên, màu và hình nền. Thấy ngay khi chỉnh, bấm Lưu để giữ lại.</p>
+                <p class="sub">Đổi tên, màu và hình nền.</p>
                 <div class="field">
                     <label for="siteTitle">Tên dashboard</label>
                     <input type="text" id="siteTitle" name="site_title" maxlength="40" value="__SITE_TITLE__" autocomplete="off">
@@ -1408,12 +1492,11 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                 </div>
                 <div class="field">
                     <label for="bgUrl">Hình nền (link ảnh https)</label>
-                    <input type="text" id="bgUrl" name="bg_url" value="__BG_URL__" placeholder="https://i.imgur.com/ten-anh.jpg" autocomplete="off">
-                    <p class="hint">Dán link trực tiếp tới file ảnh (đuôi .jpg, .png, .webp). Nên dùng Imgur hoặc Postimages, đừng upload thẳng lên Render vì file sẽ mất mỗi lần deploy.</p>
+                    <input type="text" id="bgUrl" name="bg_url" value="__BG_URL__" placeholder="https://..." autocomplete="off">
                     <div class="theme-prev" id="bgPrev"></div>
                 </div>
                 <div class="field">
-                    <label for="bgDim">Độ tối lớp phủ (cao hơn thì chữ dễ đọc hơn)</label>
+                    <label for="bgDim">Độ tối lớp phủ</label>
                     <div class="delay-row">
                         <input type="range" id="bgDim" name="bg_dim" min="0" max="90" value="__BG_DIM__">
                         <span class="delay-val" id="bgDimVal">__BG_DIM__%</span>
@@ -1436,29 +1519,25 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                         <label class="mode"><input type="radio" name="status_mode" value="dnd" __M_DND__>
                             <span><i class="dot" style="background:#ef5b6b"></i><div>DND<small>Đừng làm phiền</small></div></span></label>
                         <label class="mode"><input type="radio" name="status_mode" value="invisible" __M_INVISIBLE__>
-                            <span><i class="dot" style="background:#5c6370"></i><div>Invisible<small>Ẩn, nhìn như offline</small></div></span></label>
+                            <span><i class="dot" style="background:#5c6370"></i><div>Invisible<small>Ẩn</small></div></span></label>
                         <label class="mode"><input type="radio" name="status_mode" value="stream" __M_STREAM__>
-                            <span><i class="dot" style="background:#9b59ff"></i><div>Stream<small>Chấm tím + nút Xem</small></div></span></label>
+                            <span><i class="dot" style="background:#9b59ff"></i><div>Stream<small>Chấm tím</small></div></span></label>
                     </div>
-                    <p class="hint">Đổi màu chấm có hiệu lực ngay, không cần khởi động lại.</p>
                 </div>
 
                 <div class="field">
                     <span class="label">Thiết bị hiển thị cạnh tên bot</span>
                     <div class="modes platforms">__PLATFORMS__</div>
-                    <p class="hint">Đổi thiết bị thì bot tự khởi động lại khi bạn bấm <b>Lưu thay đổi</b> (offline vài giây). Không cần bấm Khởi động lại thủ công.</p>
                 </div>
 
                 <div class="field">
-                    <span class="label">Loại hoạt động (chữ hiện trước câu status)</span>
+                    <span class="label">Loại hoạt động</span>
                     <div class="modes">__ACTIVITY_TYPES__</div>
-                    <p class="hint">Chọn nút <b>Stream</b> ở trên thì loại hoạt động này bị bỏ qua. Ví dụ chọn "Đang nghe" thì Discord hiện "KSBot — Đang nghe gõ !help để xem lệnh".</p>
                 </div>
 
                 <div class="field">
-                    <label for="streamUrl">Link Stream (dùng cho loại Streaming)</label>
-                    <input type="text" id="streamUrl" name="stream_url" value="__STREAM_URL__" placeholder="https://www.twitch.tv/ten_kenh" autocomplete="off">
-                    <p class="hint">Chỉ nhận link twitch.tv/... hoặc YouTube (youtu.be/... tự đổi sang youtube.com/watch?v=...). Có link hợp lệ thì Discord mới hiện nút Xem màu tím.</p>
+                    <label for="streamUrl">Link Stream</label>
+                    <input type="text" id="streamUrl" name="stream_url" value="__STREAM_URL__" autocomplete="off">
                 </div>
 
                 <div class="field">
@@ -1467,7 +1546,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                         <input type="range" id="delay" name="status_delay" min="1" max="60" value="__DELAY__">
                         <span class="delay-val" id="delayVal">__DELAY__ giây</span>
                     </div>
-                    <p class="hint">Discord giới hạn tốc độ đổi status, nên để từ 5 giây trở lên cho ổn định.</p>
                 </div>
 
                 <div class="field">
@@ -1481,7 +1559,6 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                         <button type="button" class="chip" data-v="{prefix}">{prefix}</button>
                         <button type="button" class="chip" data-v="{ping}">{ping}</button>
                         <button type="button" class="chip" data-v="{ram}">{ram}</button>
-                        <button type="button" class="chip" data-v="{latency_status}">{latency_status}</button>
                     </div>
                 </div>
             </section>
@@ -1500,71 +1577,57 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                 <div class="mods">__MODULES__</div>
             </section>
 
+            <!-- GIAO DIỆN DISCORD CLIENT 3 CỘT ĐỂ CHAT, XEM LỊCH SỬ & THẢ ICON -->
             <section class="card" data-show="send">
-                <h2>Gửi tin nhắn qua bot</h2>
-                <p class="sub">Bot sẽ gửi đúng nội dung này vào kênh bạn chọn, y như nhắn tay trên Discord.</p>
-                <div class="field">
-                    <p class="pick-label">1. Chọn server</p>
-                    <div id="guildPick"></div>
-                    <p class="pick-label">2. Chọn kênh</p>
-                    <div id="chanPick"></div>
-                    <div class="pick-chosen" id="pickChosen">Chưa chọn kênh nào</div>
-                    <details class="manual" id="manualBox">
-                        <summary>Hoặc nhập ID kênh thủ công</summary>
-                        <input type="text" id="chId" placeholder="Ví dụ: 1234567890123456" inputmode="numeric">
-                        <p class="hint">Bật Developer Mode trong Discord, chuột phải vào kênh → Copy Channel ID.</p>
-                    </details>
+                <h2>Discord Client (Chat &amp; Thả Icon)</h2>
+                <p class="sub">Giao diện y chang Discord: chọn server, chọn kênh, xem lịch sử chat trực tiếp, reply và thả reaction icon siêu mượt.</p>
+                
+                <div class="discord-app">
+                    <div class="sidebar-servers" id="serverList"></div>
+                    <div class="sidebar-channels" id="chanList"></div>
+                    <div class="chat-area">
+                        <div class="chat-header" id="currentChanTitle">Chưa chọn kênh nào</div>
+                        <div class="chat-messages" id="chatMsgs"></div>
+                        <div class="chat-input-box">
+                            <div class="reply-preview" id="replyBar" style="display:none;">
+                                <span id="replyText">Đang trả lời...</span>
+                                <span id="cancelReply" style="cursor:pointer;">✕</span>
+                            </div>
+                            <div class="chat-input-wrap">
+                                <label class="chat-file-btn" title="Tải file/ảnh lên">
+                                    📁 <input type="file" id="fileInput" style="display:none;">
+                                </label>
+                                <input type="text" id="webMsgInput" placeholder="Nhập tin nhắn..." autocomplete="off">
+                                <button type="button" class="send-btn-discord" id="webSendBtn">Gửi</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="field">
-                    <label for="msgContent">Nội dung</label>
-                    <textarea id="msgContent" class="msgtext" maxlength="2000" placeholder="Nhập nội dung muốn bot gửi..."></textarea>
-                </div>
-                <div class="send-row">
-                    <button type="button" class="btn primary small" id="sendBtn">Gửi tin nhắn</button>
-                </div>
-                <div class="rows" id="outboxRows" style="margin-top:14px"></div>
             </section>
 
             <section class="card" data-show="servers">
                 <h2>Server bot đang ở</h2>
-                <p class="sub">Danh sách lấy từ dữ liệu bot gửi lên, bấm Trước/Sau để chuyển trang.</p>
                 <div id="guildRows"></div>
             </section>
 
             <section class="card" data-show="overview">
-                <div class="ov-tiles">
-                    <div class="ov-tile"><span>Server</span><b id="ovGuilds">—</b></div>
-                    <div class="ov-tile"><span>Thành viên</span><b id="ovMembers">—</b></div>
-                    <div class="ov-tile"><span>RAM dùng</span><b id="ovRam">—</b></div>
-                    <div class="ov-tile"><span>Ping</span><b id="ovPing">—</b>
-                        <svg class="spark" id="ovSpark" viewBox="0 0 100 22" preserveAspectRatio="none" aria-hidden="true"></svg>
+                <h2>Thông tin hệ thống &amp; Trạng thái bot</h2>
+                <div class="ov-tiles" style="margin-top:10px">
+                    <div class="ov-tile" style="grid-column: span 2"><span>Bot online liên tục</span><b id="upTotal">—</b></div>
+                    <div class="ov-tile"><span>Số lần chạy</span><b id="upSessions">—</b></div>
+                </div>
+                <div class="botctl" style="margin-top:20px">
+                    <div class="botctl-state" id="botState"><i></i><span>Đang kiểm tra...</span></div>
+                    <div class="botctl-btns">
+                        <button type="button" class="btn start small" id="btnStart">Bật bot</button>
+                        <button type="button" class="btn restart small" id="btnRestart">Khởi động lại</button>
+                        <button type="button" class="btn stop small" id="btnStop">Tắt bot</button>
                     </div>
                 </div>
-                <p class="ov-foot" id="ovFoot">Đang chờ dữ liệu từ bot...</p>
-                <div class="ov-tiles" style="margin-top:14px">
-                    <div class="ov-tile" style="grid-column: span 2"><span>Bot online liên tục</span><b id="upTotal">—</b></div>
-                    <div class="ov-tile"><span>Số lần khởi động lại</span><b id="upSessions">—</b></div>
-                    <div class="ov-tile"><span>Chạy từ ngày</span><b id="upFirst">—</b></div>
-                </div>
-                <p class="ov-foot" id="upFoot"></p>
-            </section>
-
-            <section class="card" data-show="overview">
-            <h2>Điều khiển bot</h2>
-            <p class="sub" style="margin-bottom:0">Bật, tắt hoặc khởi động lại hẳn tiến trình bot, không chỉ ẩn trạng thái.</p>
-            <div class="botctl">
-                <div class="botctl-state" id="botState"><i></i><span>Đang kiểm tra...</span></div>
-                <div class="botctl-btns">
-                    <button type="button" class="btn start small" id="btnStart">Bật bot</button>
-                    <button type="button" class="btn restart small" id="btnRestart">Khởi động lại</button>
-                    <button type="button" class="btn stop small" id="btnStop">Tắt bot</button>
-                </div>
-            </div>
             </section>
 
             <section class="card" data-show="overview">
                 <h2>Hoạt động gần đây</h2>
-                <p class="sub">Lệnh thành viên vừa dùng, lấy từ log bot gửi lên.</p>
                 <div id="activityRows"></div>
             </section>
         </main>
@@ -1572,7 +1635,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
         <div class="side" data-show="overview config">
         <aside class="preview card" data-show="overview config">
             <h2>Xem trước</h2>
-            <p class="sub" style="margin-bottom:0">Bot sẽ hiển thị như thế này trên Discord.</p>
+            <p class="sub" style="margin-bottom:0">Bot hiển thị trên Discord.</p>
             <div class="profile">
                 <div class="banner"></div>
                 <div class="profile-body">
@@ -1592,10 +1655,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
                     <div class="data-note" id="dataNote"><i></i><span>Đang chờ dữ liệu từ bot...</span></div>
                 </div>
             </div>
-            <p class="off-note" id="offNote">Module Trạng thái bot đang tắt nên status sẽ không được đổi.</p>
-            <p class="hint">Khi bot đang online, các biến như {guilds}, {members}, {ping} trong câu status dùng số thật từ bot. Chưa có dữ liệu thì dùng số mẫu.</p>
         </aside>
-
         </div>
     </div>
 
@@ -1692,13 +1752,13 @@ def render_page(config):
     page = page.replace("__INVITE_URL__", esc(INVITE_URL))
 
     site_title = str(config.get("site_title") or DEFAULT_CONFIG["site_title"])[:40]
-    bg_url = str(config.get("bg_url") or "")
+    bg_url = str(config.get("bg_url") or DEFAULT_CONFIG["bg_url"])
     if not BG_URL_RE.match(bg_url):
-        bg_url = ""
+        bg_url = DEFAULT_CONFIG["bg_url"]
     try:
-        bg_dim = max(0, min(90, int(config.get("bg_dim", 60))))
+        bg_dim = max(0, min(90, int(config.get("bg_dim", 50))))
     except (TypeError, ValueError):
-        bg_dim = 60
+        bg_dim = 50
     theme_css = ":root{--dim:%s;%s}" % (
         bg_dim / 100, ('--bg-img:url("%s");' % bg_url) if bg_url else ""
     )
@@ -1721,7 +1781,6 @@ def render_page(config):
 class DashboardHandler(BaseHTTPRequestHandler):
 
     def _send_ping_ok(self):
-        """Route nhẹ cho UptimeRobot / health check: không đọc config, không build HTML."""
         body = b"OK"
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
@@ -1730,7 +1789,6 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_HEAD(self):
-        # Render/uptime-checker có thể gửi HEAD để kiểm tra health.
         self.send_response(200)
         self.send_header("Content-type", "text/html; charset=utf-8")
         self.end_headers()
@@ -1738,6 +1796,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/ping", "/healthz"):
             self._send_ping_ok()
+            return
+
+        if self.path.startswith("/api/chat/"):
+            ch_id = self.path.split("/")[-1]
+            data = read_chat_history(ch_id)
+            self._reply_json(200, data)
             return
 
         if self.path in ("/stats", "/activity", "/outbox", "/botctl", "/uptime"):
@@ -1774,6 +1838,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(out)
 
     def do_POST(self):
+        if self.path == "/api/send":
+            form = cgi.FieldStorage(
+                fp=self.rfile,
+                headers=self.headers,
+                environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': self.headers.get('Content-Type', '')}
+            )
+            ch_id = form.getvalue("channel_id")
+            content = form.getvalue("content", "")
+            reply_to = form.getvalue("reply_to", None)
+            
+            file_path = None
+            if "file" in form and form["file"].filename:
+                file_item = form["file"]
+                os.makedirs("/tmp", exist_ok=True)
+                file_path = os.path.join("/tmp", file_item.filename)
+                with open(file_path, "wb") as f:
+                    f.write(file_item.file.read())
+                    
+            add_web_command({
+                "type": "send",
+                "channel_id": ch_id,
+                "content": content,
+                "reply_to": reply_to,
+                "file_path": file_path
+            })
+            self._reply_json(200, {"ok": True})
+            return
+
+        if self.path == "/api/react":
+            length = int(self.headers.get('Content-Length', 0))
+            data = json.loads(self.rfile.read(length).decode('utf-8'))
+            add_web_command({
+                "type": "react",
+                "channel_id": data["channel_id"],
+                "message_id": data["message_id"],
+                "emoji": data["emoji"]
+            })
+            self._reply_json(200, {"ok": True})
+            return
+
         if self.path not in ("/save", "/botctl", "/send-message"):
             self.send_response(404)
             self.end_headers()
@@ -1832,7 +1936,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         mode = parsed.get("status_mode", ["online"])[0]
         force_stream = (mode == "stream")
         if mode not in ("online", "idle", "dnd", "invisible"):
-            mode = "online"  # nút Stream lưu là online + force_stream
+            mode = "online"
 
         activity_type = parsed.get("activity_type", ["playing"])[0]
         if activity_type not in ACTIVITY_LABELS:
@@ -1851,14 +1955,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         site_title = parsed.get("site_title", [""])[0].strip()[:40] or DEFAULT_CONFIG["site_title"]
         bg_url = parsed.get("bg_url", [""])[0].strip()
         if not BG_URL_RE.match(bg_url):
-            bg_url = ""
+            bg_url = DEFAULT_CONFIG["bg_url"]
         stream_url = normalize_stream_url(parsed.get("stream_url", [""])[0])
         if not STREAM_URL_RE.match(stream_url):
             stream_url = DEFAULT_CONFIG["stream_url"]
         try:
-            bg_dim = max(0, min(90, int(parsed.get("bg_dim", [60])[0])))
+            bg_dim = max(0, min(90, int(parsed.get("bg_dim", [50])[0])))
         except (TypeError, ValueError):
-            bg_dim = 60
+            bg_dim = 50
 
         new_config = {
             "site_title": site_title,
@@ -1877,15 +1981,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         for key, *_ in MODULES:
             new_config[key] = key in parsed
 
-        # Gộp với config cũ để không làm mất các key do bot/lệnh Discord ghi
         merged = read_config()
         old_platform = merged.get("platform", "ios")
         merged.update(new_config)
         write_config(merged)
 
-        # Thiết bị nằm trong gói IDENTIFY lúc đăng nhập gateway nên phải đăng nhập lại.
-        # Chỉ restart khi platform đổi thật VÀ bot đang chạy (nếu bạn đã bấm Tắt bot
-        # thì không tự bật lại).
         restarted = False
         if platform != old_platform and bot_status()["running"]:
             restart_bot()
@@ -1904,36 +2004,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        # Bớt spam log GET /ping, log gọn lại
-        quiet_paths = ("/ping", "/healthz", "/stats", "/activity", "/outbox", "/botctl", "/uptime")
-        if self.path not in quiet_paths:
+        quiet_paths = ("/ping", "/healthz", "/stats", "/activity", "/outbox", "/botctl", "/uptime", "/api/chat")
+        if not any(self.path.startswith(p) for p in quiet_paths):
             super().log_message(format, *args)
 
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
     server = ThreadingHTTPServer(("0.0.0.0", port), DashboardHandler)
-
-    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-    render_url = os.environ.get("RENDER_EXTERNAL_URL")
-    print("=" * 60)
-    if domain:
-        print(f"🌐 Dashboard: https://{domain}")
-    elif render_url:
-        print(f"🌐 Dashboard: {render_url}")
-    else:
-        print(f"🌐 Dashboard đang chạy ở cổng {port}")
-        print("   (Railway: Settings > Networking > Generate Domain để có link)")
-    print("=" * 60, flush=True)
-
     server.serve_forever()
 
 
 def run_bot_forever():
-    # Nếu bot.py crash liên tục (ví dụ bị Discord/Cloudflare tạm khóa IP vì
-    # đăng nhập dồn dập), thời gian chờ trước khi thử lại sẽ tăng dần:
-    # 5s, 15s, 45s... tối đa 5 phút — tránh làm lệnh cấm kéo dài thêm.
-    MIN_HEALTHY_RUN_SECONDS = 30  # chạy được hơn mức này thì coi là ổn, reset backoff
+    MIN_HEALTHY_RUN_SECONDS = 30
     BACKOFF_START = 5
     BACKOFF_MAX = 300
     backoff = BACKOFF_START
@@ -1954,27 +2037,20 @@ def run_bot_forever():
         start_time = time.time()
         process.wait()
         ran_seconds = time.time() - start_time
-        print(f"[BotRunner] {script} đã thoát (mã {process.returncode}) sau {ran_seconds:.1f}s", flush=True)
         with BOT_LOCK:
             BOT_STATE["process"] = None
 
-        # Nếu người dùng vừa bấm Tắt bot thì đừng tự khởi động lại ngay
         if BOT_STATE["stopped_by_user"]:
             backoff = BACKOFF_START
             time.sleep(2)
             continue
 
-        # Bị Discord/Cloudflare chặn IP (429/1015): thử lại dồn dập chỉ làm lệnh
-        # chặn kéo dài, nên chờ thật lâu (15 -> 30 -> 60 phút). Bấm "Bật bot" trên
-        # dashboard để bỏ qua thời gian chờ, "Tắt bot" để dừng hẳn.
         if process.returncode == EXIT_RATE_LIMITED:
             wait_s = RATE_LIMIT_WAITS[min(rate_limit_hits, len(RATE_LIMIT_WAITS) - 1)]
             rate_limit_hits += 1
             until = time.time() + wait_s
             with BOT_LOCK:
                 BOT_STATE["cooldown_until"] = until
-            print(f"[BotRunner] Discord đang chặn IP của host. Chờ {wait_s // 60} phút rồi mới thử lại "
-                  f"(lần chặn thứ {rate_limit_hits}).")
             while time.time() < until:
                 with BOT_LOCK:
                     if BOT_STATE["cooldown_until"] is None or not BOT_STATE["should_run"]:
@@ -1985,13 +2061,9 @@ def run_bot_forever():
             continue
 
         if ran_seconds >= MIN_HEALTHY_RUN_SECONDS:
-            # Chạy ổn một thời gian rồi mới tắt (ví dụ Render deploy lại
-            # bình thường, hoặc bấm Khởi động lại) -> không tính là crash loop
             backoff = BACKOFF_START
             rate_limit_hits = 0
         else:
-            print(f"[BotRunner] bot.py vừa thoát chỉ sau {ran_seconds:.1f}s, "
-                  f"chờ {backoff}s rồi mới thử lại để tránh bị Discord khóa IP.")
             time.sleep(backoff)
             backoff = min(backoff * 3, BACKOFF_MAX)
             continue
@@ -2004,7 +2076,6 @@ if __name__ == "__main__":
     t.daemon = True
     t.start()
 
-    # Host tắt dashboard -> chuyển SIGTERM xuống bot để lưu uptime lần cuối
     try:
         signal.signal(signal.SIGTERM, _forward_sigterm)
     except (ValueError, OSError):
