@@ -319,7 +319,7 @@ class DashboardBridge(commands.Cog):
             await ch.send(
                 content=content or None,
                 files=files or None,
-                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=False),
+                allowed_mentions=discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=bool(d.get("ping", True))),
                 **kw,
             )
         finally:
