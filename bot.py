@@ -15,6 +15,41 @@ from discord.ext import commands
 import threading
 from supabase import create_client, Client
 
+# ================================================================
+# 🧩 BỔ SUNG: XỬ LÝ THẢ ICON (REACTION) TỪ DASHBOARD WEB
+# ================================================================
+async def dashboard_reaction_loop():
+    """Đọc lệnh thả icon/reaction từ web_commands.json do Dashboard gửi tới"""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            cmd_file = "web_commands.json"
+            if os.path.exists(cmd_file):
+                with open(cmd_file, "r", encoding="utf-8") as f:
+                    cmds = json.load(f)
+                if cmds and isinstance(cmds, list):
+                    # Xóa file lệnh cũ ngay lập tức để tránh đọc lặp
+                    _dashboard_write_json(cmd_file, [])
+                    
+                    for cmd in cmds:
+                        if cmd.get("type") == "react":
+                            try:
+                                ch_id = int(cmd["channel_id"])
+                                msg_id = int(cmd["message_id"])
+                                emoji = cmd["emoji"]
+                                
+                                channel = bot.get_channel(ch_id) or await bot.fetch_channel(ch_id)
+                                if channel:
+                                    message = await channel.fetch_message(msg_id)
+                                    if message:
+                                        await message.add_reaction(emoji)
+                            except Exception as e:
+                                print(f"[Dashboard React] Lỗi thả icon: {e}")
+        except Exception as e:
+            print(f"[Dashboard React] Lỗi đọc vòng lặp reaction: {e}")
+        await asyncio.sleep(2)
+
+# Khởi chạy ngầm vòng lặp xử lý reaction cùng lúc với các vòng lặp khác trong hàm main() hoặc on_ready()
 # ==========================================
 # 0. KẾT NỐI SUPABASE (CLOUD MEMORY) - ĐỒNG BỘ DỮ LIỆU LÊN MẠNG
 # ==========================================
@@ -5419,6 +5454,7 @@ async def main():
         await bot.load_extension("gif")
         asyncio.create_task(dashboard_stats_loop())
         asyncio.create_task(dashboard_outbox_loop())
+        asyncio.create_task(dashboard_reaction_loop())
         try:
             await bot.start(TOKEN)
         except discord.HTTPException as e:
