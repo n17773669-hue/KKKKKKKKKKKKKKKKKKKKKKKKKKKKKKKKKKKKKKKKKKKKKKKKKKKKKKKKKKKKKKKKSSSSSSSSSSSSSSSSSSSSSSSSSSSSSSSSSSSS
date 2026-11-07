@@ -5419,7 +5419,6 @@ async def main():
         await bot.load_extension("gif")
         asyncio.create_task(dashboard_stats_loop())
         asyncio.create_task(dashboard_outbox_loop())
-        asyncio.create_task(dashboard_reaction_loop())
         try:
             await bot.start(TOKEN)
         except discord.HTTPException as e:
