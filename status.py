@@ -96,14 +96,13 @@ def save_cfg(updates):
 
 
 def get_total_uptime():
-    """Đọc tổng thời gian tích lũy từ uptime.json giống như trên web."""
+    """Đọc tổng thời gian tích lũy từ uptime.json giống như trên web[cite: 1, 2]."""
     try:
         if os.path.exists(UPTIME_FILE):
             with open(UPTIME_FILE, "r", encoding="utf-8") as f:
                 d = json.load(f)
             if isinstance(d, dict):
                 total = float(d.get("total_seconds", 0))
-                # Cộng thêm phần chênh lệch nhỏ nếu file được ghi cách đây ít giây
                 gap = max(0.0, min(30.0, time.time() - os.path.getmtime(UPTIME_FILE)))
                 return total + gap
     except Exception:
@@ -183,8 +182,8 @@ def latency_label(ms):
 def render_status(text, *, guilds, members, prefix, ping_ms, ram, uptime_s):
     """Thay các biến {guilds} {members} {prefix} {ping} {ram} {uptime} {latency_status}."""
     out = text.replace("{guilds}", f"{guilds:,}".replace(",", "."))
-    out = text.replace("{members}", f"{members:,}".replace(",", "."))
-    out = text.replace("{prefix}", prefix)
+    out = out.replace("{members}", f"{members:,}".replace(",", "."))
+    out = out.replace("{prefix}", prefix)
     out = re.sub(r"\{ping\}(\s*ms)?", lambda m: f"{ping_ms} ms" if ping_ms is not None else "N/A", out, flags=re.I)
     out = re.sub(r"\{ram\}(\s*MB)?", lambda m: f"{ram} MB" if ram is not None else "N/A", out, flags=re.I)
     out = out.replace("{uptime}", fmt_uptime(uptime_s))
@@ -240,14 +239,19 @@ class StatusCog(commands.GroupCog, group_name="status", group_description="Chỉ
     def build_text(self, text, cfg):
         lat = self.bot.latency
         ping = round(lat * 1000) if lat == lat and lat not in (float("inf"), float("-inf")) else None
+        
+        # Lấy trực tiếp số liệu server và thành viên từ bot
+        guilds_count = len(self.bot.guilds)
+        members_count = sum((g.member_count or 0) for g in self.bot.guilds)
+
         return render_status(
             text,
-            guilds=len(self.bot.guilds),
-            members=sum((g.member_count or 0) for g in self.bot.guilds),
+            guilds=guilds_count,
+            members=members_count,
             prefix=str(cfg.get("prefix", "!")),
             ping_ms=ping,
             ram=ram_mb(),
-            uptime_s=get_total_uptime(),  # Lấy tổng thời gian chạy tích lũy từ uptime.json
+            uptime_s=get_total_uptime(),  # Lấy tổng thời gian chạy tích lũy từ uptime.json[cite: 1, 2]
         )
 
     def apply_now(self):
