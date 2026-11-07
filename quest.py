@@ -79,7 +79,6 @@ dashboard_messages: Dict[int, discord.Message] = {}
 # MODULE 1: ADVANCED ANTI-BAN SPOOFING & MULTI-PROFILE BUILD GENERATOR
 # ==============================================================================
 
-# Danh sách các cấu hình giả lập thiết bị đa dạng (Windows, Mac, Client versions)
 DEVICE_PROFILES = [
     {
         "os": "Windows", "os_version": "10.0.26100", "os_arch": "x64", "app_arch": "x64",
@@ -132,7 +131,6 @@ def fetch_latest_build_number() -> int:
 
 
 def make_super_properties(build_number: int) -> str:
-    # Chọn ngẫu nhiên một profile thiết bị mỗi lần khởi tạo để tránh lộ dấu vân tay tĩnh
     profile = random.choice(DEVICE_PROFILES)
     obj = {
         "os": profile["os"],
@@ -322,7 +320,7 @@ class TokenInputModal(discord.ui.Modal, title="🔐 CẬP NHẬT DISCORD USER TO
 async def process_user_token(interaction: discord.Interaction, user_token: str):
     user_id = interaction.user.id
     if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
     loop = asyncio.get_running_loop()
     build_number = await loop.run_in_executor(None, fetch_latest_build_number)
@@ -407,7 +405,9 @@ async def process_user_token(interaction: discord.Interaction, user_token: str):
     }
 
     embed = create_status_embed(user_id)
-    await interaction.followup.send(content=f"🚀 **Đã lưu token & tự động nhận nhiệm vụ!** Tìm thấy **{total_found} Quest(s)**. Đang cày ngầm đa luồng an toàn...", embed=embed, ephemeral=False)
+    msg = await interaction.followup.send(content=f"🚀 **Đã lưu token & tự động nhận nhiệm vụ!** Tìm thấy **{total_found} Quest(s)**. Bảng tiến độ đồng bộ real-time bên dưới:", embed=embed, ephemeral=False)
+
+    dashboard_messages[user_id] = msg
 
     asyncio.create_task(run_farming_process(interaction.client, user_id))
 
@@ -424,7 +424,7 @@ def run_single_quest_sync(p_quest: dict, api: DiscordAPI, user_id: int, bot: com
     seconds_done = p_quest["done_seconds"]
 
     if task_type in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE"):
-        speed = random.uniform(5.5, 7.5) # Tốc độ ngẫu nhiên giả lập người thật xem video
+        speed = random.uniform(5.5, 7.5)
         while seconds_done < seconds_needed:
             if user_id not in active_quests:
                 return
@@ -448,14 +448,14 @@ def run_single_quest_sync(p_quest: dict, api: DiscordAPI, user_id: int, bot: com
                     p_quest["done_seconds"] = seconds_done
                 elif r.status_code == 429:
                     retry_after = r.json().get("retry_after", 5)
-                    time.sleep(retry_after + random.uniform(2.0, 4.0)) # Bổ sung khoảng đệm an toàn khi dính rate limit
+                    time.sleep(retry_after + random.uniform(2.0, 4.0))
                     continue
             except Exception:
                 pass
 
             if timestamp >= seconds_needed:
                 break
-            time.sleep(random.uniform(0.9, 1.4)) # Jitter ngẫu nhiên cho mỗi nhịp gửi
+            time.sleep(random.uniform(0.9, 1.4))
 
         try:
             api.post(f"/quests/{qid}/video-progress", {"timestamp": seconds_needed})
@@ -495,7 +495,7 @@ def run_single_quest_sync(p_quest: dict, api: DiscordAPI, user_id: int, bot: com
             except Exception:
                 pass
 
-            time.sleep(random.uniform(18.0, 24.0)) # Heartbeat giãn cách ngẫu nhiên
+            time.sleep(random.uniform(18.0, 24.0))
 
         try:
             api.post(f"/quests/{qid}/heartbeat", {"stream_key": f"call:0:{pid}", "terminal": True})
@@ -636,13 +636,13 @@ class UltimateQuestCog(commands.Cog):
     def cog_unload(self):
         self.dashboard_loop.cancel()
 
-    @app_commands.command(name="auto", description="[CÀY QUEST] Tự động quét, nhận và cày sạch Quests song song")
+    @app_commands.command(name="auto", description="[CÀY QUEST] Tự động quét, nhận và cày sạch Quests song song kèm bảng điều khiển real-time")
     async def auto_cay(self, interaction: discord.Interaction):
         user_id_str = str(interaction.user.id)
         saved_tokens = load_saved_tokens()
 
         if user_id_str in saved_tokens:
-            await interaction.response.send_message("🔍 Đã tìm thấy token trong bộ nhớ. Đang quét và cày ngầm song song...", ephemeral=True)
+            await interaction.response.defer(ephemeral=False)
             await process_user_token(interaction, saved_tokens[user_id_str])
         else:
             await interaction.response.send_modal(TokenInputModal(self.bot))
@@ -661,29 +661,31 @@ class UltimateQuestCog(commands.Cog):
         else:
             await interaction.response.send_message("❌ Bạn chưa lưu token nào trong hệ thống.", ephemeral=True)
 
-    @app_commands.command(name="tintinh", description="[DASHBOARD] Xem bảng tiến độ chi tiết real-time")
+    @app_commands.command(name="tien_trinh_quest", description="[DASHBOARD] Xem bảng tiến độ chi tiết real-time")
     async def xem_tien_trinh(self, interaction: discord.Interaction):
         embed = create_status_embed(interaction.user.id)
         await interaction.response.send_message(embed=embed)
-        dashboard_messages[interaction.channel_id] = await interaction.original_response()
+        dashboard_messages[interaction.user.id] = await interaction.original_response()
 
     @app_commands.command(name="huyorb", description="[ĐIỀU KHIỂN] Hủy phiên cày hiện tại đang chạy")
     async def huy_quest(self, interaction: discord.Interaction):
         if interaction.user.id in active_quests:
             active_quests.pop(interaction.user.id, None)
+            dashboard_messages.pop(interaction.user.id, None)
             await interaction.response.send_message("✅ Đã hủy tiến trình thành công.", ephemeral=True)
         else:
             await interaction.response.send_message("❌ Không có tiến trình cày nào đang chạy.", ephemeral=True)
 
-    @tasks.loop(seconds=6)
+    @tasks.loop(seconds=5)
     async def dashboard_loop(self):
-        for cid, msg in list(dashboard_messages.items()):
+        for uid, msg in list(dashboard_messages.items()):
             try:
-                if active_quests:
-                    first_user_id = list(active_quests.keys())[0]
-                    await msg.edit(embed=create_status_embed(first_user_id))
+                if uid in active_quests:
+                    await msg.edit(embed=create_status_embed(uid))
+                else:
+                    dashboard_messages.pop(uid, None)
             except Exception:
-                dashboard_messages.pop(cid, None)
+                dashboard_messages.pop(uid, None)
 
 
 async def setup(bot: commands.Bot):
