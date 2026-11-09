@@ -1,9 +1,13 @@
 """
-dashboard_bridge.py — cầu nối giữa Dashboard (web.py) và Discord.
+dashboard_bridge.py — cầu nối giữa Dashboard (web.py) và Discord.  (BẢN V3)
 
 Cách dùng: trong bot.py, hàm main(), thêm 1 dòng cùng chỗ các load_extension khác:
     await bot.load_extension("dashboard_bridge")
-và XÓA dòng  asyncio.create_task(dashboard_reaction_loop())  (+ cả hàm đó).
+
+Muốn thấy TRẠNG THÁI ONLINE/IDLE/DND của thành viên thì bot.py phải bật intents:
+    intents.members = True
+    intents.presences = True
+và bật 2 công tắc "Server Members Intent" + "Presence Intent" trong Discord Developer Portal > Bot.
 
 web.py ghi lệnh vào thư mục web_spool/cmd_<id>.json, file này xử lý rồi ghi
 kết quả ra web_spool/res_<id>.json. Mỗi lệnh 1 file nên không bị đọc/ghi đè nhau.
@@ -22,6 +26,7 @@ UPLOAD_DIR = "web_uploads"
 DM_FILE = "dm_users.json"
 CMD_MAX_AGE = 30      # lệnh nằm quá lâu (web đã bỏ cuộc) thì bỏ qua
 POLL_SECONDS = 0.3
+VIEW_TTL = 25         # đang mở kênh nào thì trong ngần này giây tin mới của kênh đó KHÔNG tính chưa đọc
 ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 os.makedirs(SPOOL_DIR, exist_ok=True)
@@ -158,7 +163,9 @@ class DashboardBridge(commands.Cog):
         self.bot = bot
         self.task = None
         self.user_cache = {}
-        self.unread = {}
+        self.unread = {}      # channel_id -> {g, c, u, un, n, m, t}
+        self.viewing = None   # (channel_id, thời điểm) kênh đang mở trên web
+        self.dm_last = {}     # user_id -> thời điểm tin DM gần nhất (để xếp ai nhắn thì lên đầu)
 
     async def cog_load(self):
         self.task = asyncio.create_task(self._loop())
@@ -171,20 +178,40 @@ class DashboardBridge(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         ch = message.channel
-        if isinstance(ch, discord.DMChannel) and ch.recipient and not ch.recipient.bot:
-            _remember_dm(ch.recipient.id)
         me = self.bot.user
+        is_dm = isinstance(ch, discord.DMChannel)
+        if is_dm and ch.recipient and not ch.recipient.bot:
+            _remember_dm(ch.recipient.id)
+            self.dm_last[ch.recipient.id] = time.time()
         if me is None or message.author.id == me.id:
             return
+        # Bot khác nhắn DM không hiện trong danh sách DM nên KHÔNG tính chưa đọc (trước đây gây số "1" ma)
+        if is_dm and message.author.bot:
+            return
+        v = self.viewing
+        if v and v[0] == str(ch.id) and time.time() - v[1] < VIEW_TTL:
+            return  # đang xem kênh này trên web rồi thì không phải tin chưa đọc
         g = message.guild
-        e = self.unread.setdefault(str(ch.id), {"g": str(g.id) if g else None, "u": None, "n": 0, "m": 0})
+        e = self.unread.setdefault(str(ch.id), {
+            "g": str(g.id) if g else None, "c": None, "u": None, "un": None, "n": 0, "m": 0, "t": 0,
+        })
         e["n"] += 1
+        e["t"] = time.time()
         if g is None:
             e["u"] = str(message.author.id)
+            e["un"] = message.author.display_name
             e["m"] += 1
-        elif (me in message.mentions or message.mention_everyone
-              or (g.me and any(r in g.me.roles for r in message.role_mentions))):
-            e["m"] += 1
+        else:
+            e["c"] = getattr(ch, "name", None)
+            ref = message.reference
+            replied = bool(ref and isinstance(ref.resolved, discord.Message) and ref.resolved.author.id == me.id)
+            if (replied or me in message.mentions or message.mention_everyone
+                    or (g.me and any(r in g.me.roles for r in message.role_mentions))):
+                e["m"] += 1
+        if len(self.unread) > 300:
+            oldest = sorted(self.unread, key=lambda k: self.unread[k].get("t", 0))[:50]
+            for k in oldest:
+                self.unread.pop(k, None)
 
     # ---------- vòng lặp nhận lệnh ----------
     async def _loop(self):
@@ -255,6 +282,30 @@ class DashboardBridge(commands.Cog):
         if g and g.me:
             return bool(ch.permissions_for(g.me).send_messages)
         return True
+
+    def _member_of(self, uid, prefer=None):
+        """Tìm member (có status/activity) của uid: ưu tiên server chỉ định, không có thì tìm ở mọi server chung."""
+        if prefer is not None:
+            m = prefer.get_member(uid)
+            if m is not None:
+                return m
+        for g in self.bot.guilds:
+            m = g.get_member(uid)
+            if m is not None:
+                return m
+        return None
+
+    @staticmethod
+    def _acts(m):
+        """(custom status, [các hoạt động khác]) của 1 member."""
+        custom, acts = None, []
+        for a in (getattr(m, "activities", None) or []):
+            if isinstance(a, discord.CustomActivity):
+                emo = str(a.emoji) if (a.emoji and a.emoji.is_unicode_emoji()) else ""
+                custom = ((emo + " ") + (a.name or "")).strip() or None
+            elif getattr(a, "name", None):
+                acts.append(str(a.name)[:60])
+        return custom, acts
 
     # ---------- các lệnh ----------
     async def h_channels(self, d):
@@ -378,19 +429,38 @@ class DashboardBridge(commands.Cog):
         return u
 
     async def h_dm_list(self, d):
-        ids = []
+        """Danh sách DM: ai nhắn gần nhất nằm trên cùng. Kèm trạng thái + custom status để hiện kế bên tên."""
+        last = {}
         for ch in self.bot.private_channels:
             if isinstance(ch, discord.DMChannel) and ch.recipient and not ch.recipient.bot:
-                ids.append(ch.recipient.id)
-        for uid in _load_dm_ids():
-            if uid not in ids:
-                ids.append(uid)
+                ts = 0
+                if ch.last_message_id:
+                    try:
+                        ts = discord.utils.snowflake_time(ch.last_message_id).timestamp()
+                    except Exception:
+                        ts = 0
+                last[ch.recipient.id] = ts
+        file_ids = _load_dm_ids()
+        rank = {uid: i for i, uid in enumerate(file_ids)}
+        for uid in file_ids:
+            last.setdefault(uid, 0)
+        for uid, t in self.dm_last.items():
+            last[uid] = max(last.get(uid, 0), t)
+        order = sorted(last, key=lambda x: (last[x], rank.get(x, -1)), reverse=True)[:60]
         out = []
-        for uid in ids[-60:][::-1]:
+        for uid in order:
             u = await self._user(uid)
-            if u is None:
+            if u is None or u.bot:
                 continue
-            out.append({"user": ser_user(u), "channel_id": str(u.dm_channel.id) if u.dm_channel else None})
+            m = self._member_of(uid)
+            custom, acts = self._acts(m) if m else (None, [])
+            out.append({
+                "user": ser_user(u),
+                "channel_id": str(u.dm_channel.id) if u.dm_channel else None,
+                "status": str(m.status) if m else "offline",
+                "custom": custom or (acts[0] if acts else None),
+                "last": last[uid],
+            })
         return out
 
     async def h_dm_open(self, d):
@@ -429,8 +499,15 @@ class DashboardBridge(commands.Cog):
             u = ser_user(m)
             u["status"] = str(m.status)
             u["color"] = m.color.value or None
+            custom, acts = self._acts(m)
+            u["act"] = custom or (acts[0] if acts else None)
             out.append(u)
-        return out
+        intents = self.bot.intents
+        return {
+            "list": out,
+            "presence": bool(intents.presences),       # False => ai cũng hiện offline vì bot không nhìn thấy trạng thái
+            "members_intent": bool(intents.members),
+        }
 
     async def h_profile(self, d):
         uid = int(d["user_id"])
@@ -453,12 +530,19 @@ class DashboardBridge(commands.Cog):
                 accent = fu.accent_colour.value if fu.accent_colour else None
             except Exception:
                 pass
+        pm = m or self._member_of(uid)   # member bất kỳ để lấy status/hoạt động (kể cả khi mở từ DM)
+        custom, acts = self._acts(pm) if pm else (None, [])
+        mutual = [x.name for x in self.bot.guilds if x.get_member(uid)][:12]
         out = ser_user(base)
         out.update({
             "username": (u or base).name,
             "created": (u or base).created_at.timestamp(),
             "joined": m.joined_at.timestamp() if m and m.joined_at else None,
-            "status": str(m.status) if m else None,
+            "status": str(pm.status) if pm else None,
+            "custom": custom,
+            "activities": acts,
+            "mutual": mutual,
+            "presence": bool(self.bot.intents.presences),
             "roles": [{"name": r.name, "color": r.color.value}
                       for r in reversed(m.roles) if not r.is_default()][:25] if m else [],
             "banner": banner,
@@ -467,8 +551,22 @@ class DashboardBridge(commands.Cog):
         return out
 
     async def h_unread(self, d):
+        """open = kênh đang mở (đã đọc), clear = 'all' | '@dm' | <guild_id> (đánh dấu đã đọc hàng loạt)."""
+        clear = d.get("clear")
+        if clear == "all":
+            self.unread.clear()
+        elif clear == "@dm":
+            for k in [k for k, v in self.unread.items() if v.get("g") is None]:
+                self.unread.pop(k, None)
+        elif clear:
+            for k in [k for k, v in self.unread.items() if v.get("g") == str(clear)]:
+                self.unread.pop(k, None)
         if d.get("open"):
-            self.unread.pop(str(d["open"]), None)
+            cid = str(d["open"])
+            self.viewing = (cid, time.time())
+            self.unread.pop(cid, None)
+        else:
+            self.viewing = None
         return self.unread
 
 
