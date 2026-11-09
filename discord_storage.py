@@ -42,7 +42,7 @@ PROTECTED_CHANNEL_ID = 1542062252897865802   # KHÔNG BAO GIỜ đụng tới k�
 
 DB_PATH = "ksbot_master.db"
 WORDS_DB = os.getenv("NOITU_DB", "noitu_words.db")   # database của noitu.py
-NOITU_KEEP_TABLES = ("noitu_settings", "vtv_settings", "noitu_stats")  # kho từ tự tải lại online nên không backup
+NOITU_KEEP_TABLES = ("noitu_settings", "vtv_settings", "noitu_stats", "noitu_games")  # kho từ tự tải lại online nên không backup
 STATS_FILE = "command_stats.json"
 LOG_FILE = "command_log.jsonl"
 COIN_LOG_FILE = "coin_log.jsonl"
@@ -1032,6 +1032,13 @@ class StorageCog(commands.Cog):
             return await ctx.send("❌ Chỉ **Owner Bot** mới được dùng lệnh này.", delete_after=5)
         if getattr(ctx, "interaction", None) is not None:
             await ctx.defer(ephemeral=True)
+        paused = []
+        try:
+            noi = self.bot.get_cog("NoituCog")
+            if noi is not None and hasattr(noi, "pause_for_update"):
+                paused = await noi.pause_for_update()
+        except Exception as e:
+            print(f"[Storage] Không tạm dừng được Nối Từ: {type(e).__name__}: {e}")
         try:
             infos = await backup_all(self.bot, _db_path, tag="manual")
         except discord.Forbidden:
@@ -1051,6 +1058,12 @@ class StorageCog(commands.Cog):
                             value=f"{i['bytes']:,} bytes • `{', '.join(i['files'])[:150]}`", inline=False)
         embed.add_field(name="⌨️ Lệnh đã ghi", value=f"**{s['total']:,}** lệnh • **{len(s['users'])}** người dùng", inline=True)
         embed.add_field(name="⏱️ Tổng online", value=fmt_dur(UPTIME.data.get("total_seconds", 0)), inline=True)
+        if paused:
+            embed.add_field(
+                name="⏸️ Nối Từ đã tạm dừng",
+                value=f"{len(paused)} kênh • bot bật lại sẽ tự chạy tiếp • không restart thì gõ `.noiresume` ở kênh đó",
+                inline=False,
+            )
         await ctx.send(embed=embed)
 
     # ---------- .coinlog
