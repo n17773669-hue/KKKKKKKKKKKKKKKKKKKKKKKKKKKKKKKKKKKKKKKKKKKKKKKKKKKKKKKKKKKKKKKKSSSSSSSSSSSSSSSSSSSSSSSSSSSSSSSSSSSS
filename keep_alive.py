@@ -342,7 +342,7 @@ DEFAULT_CONFIG = {
     "status_delay": 5,
     "status_messages": [
         "🤖 {guilds} server | {members} thành viên",
-        "Bot đã hoạt động {latency_status}"
+        "Bot đã hoạt động {uptime}"
     ],
     "bat_ai": True,
     "bat_caro": True,
