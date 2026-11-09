@@ -15,8 +15,8 @@ import sys
 import re
 import os
 
+import dash_extra as X
 CONFIG_FILE = "config.json"
-CONFIG_LOCK = threading.Lock()
 
 # ----------------------------------------------------------------------
 # Bảo mật: đặt biến môi trường DASHBOARD_PASSWORD (Bot-Hosting > Môi trường).
@@ -199,6 +199,8 @@ def build_rpc(body):
         ok = p["user_id"]
     elif t == "unread":
         p["open"] = _id(body.get("open"))
+        c = str(body.get("clear") or "")
+        p["clear"] = c if c in ("all", "@dm") else _id(c)
         ok = True
     else:
         return None, "Lệnh không hợp lệ"
