@@ -1912,7 +1912,7 @@ PAGE_JS = r"""
         };
         function openDM_last(last) { openChannel(last.c, last.n || 'DM', true, true); }
     }
-    if (CHAT_ON) initChat();
+    __DASH_JS__
 
     var TABS = ['overview', 'config', 'features', 'chat', 'servers', 'theme'];
     function setTab(name) {
@@ -2000,6 +2000,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>__CSS__</style>
 <style>__THEME_CSS__</style>
+<style>__DASH_STYLE__</style>
 </head>
 <body data-tab="overview" class="__BODY_CLASS__">
 <div class="wrap">
@@ -2230,7 +2231,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
     </form>
 </div>
 <div class="toast" id="toast" role="status"></div>
-<script>__JS__</script>
+<script nonce="__NONCE__">__JS__</script>
 </body>
 </html>
 """
@@ -2249,13 +2250,13 @@ __ERR__
 """
 
 
-def render_login(error=False):
-    err = '<p class="err">Sai mật khẩu, thử lại.</p>' if error else ""
+def render_login(msg=""):
+    err = '<p class="err">%s</p>' % html.escape(msg) if msg else ""
     css = PAGE_CSS.replace("__ACCENT__", ACCENTS[0][0]).replace("__ACCENT_INK__", ACCENTS[0][2])
     return LOGIN_PAGE.replace("__CSS__", css).replace("__ERR__", err)
 
 
-def render_page(config):
+def render_page(config, nonce=""):
     esc = lambda s: html.escape(str(s), quote=True)
 
     msgs = config.get("status_messages") or DEFAULT_CONFIG["status_messages"]
@@ -2315,6 +2316,7 @@ def render_page(config):
 
     css = PAGE_CSS.replace("__ACCENT__", accent_hex).replace("__ACCENT_INK__", accent_ink)
     js = PAGE_JS.replace("__CHAT_ON__", "true" if CHAT_ENABLED else "false").replace("__DEFAULT_BG__", DEFAULT_BG)
+    js = js.replace("__DASH_JS__", X.CHAT_JS if CHAT_ENABLED else "")
 
     site_title = str(config.get("site_title") or DEFAULT_CONFIG["site_title"])[:40]
     bg_url = str(config.get("bg_url") or "")
@@ -2330,7 +2332,7 @@ def render_page(config):
         stream_url = DEFAULT_CONFIG["stream_url"]
 
     page = PAGE_TEMPLATE
-    page = page.replace("__CHAT_BLOCK__", CHAT_BLOCK if CHAT_ENABLED else CHAT_LOCKED)
+    page = page.replace("__CHAT_BLOCK__", X.CHAT_BLOCK if CHAT_ENABLED else CHAT_LOCKED)
     page = page.replace("__LOGOUT__", '<a class="logout" href="/logout">Đăng xuất</a>' if PASSWORD else "")
     page = page.replace("__SWATCHES__", swatches_html)
     page = page.replace("__PREFIX__", esc(config.get("prefix", "!")))
@@ -2348,6 +2350,7 @@ def render_page(config):
     page = page.replace("__BG_URL__", esc(bg_url))
     page = page.replace("__STREAM_URL__", esc(stream_url))
     page = page.replace("__BG_DIM__", str(bg_dim))
+    page = page.replace("__DASH_STYLE__", X.CHAT_CSS).replace("__NONCE__", nonce)
     # CSS/JS thay cuối cùng để không bị replace nhầm bên trong
     page = page.replace("__CSS__", css).replace("__JS__", js)
     return page
@@ -2357,26 +2360,33 @@ def render_page(config):
 # Web server
 # ----------------------------------------------------------------------
 API_GET = ("/stats", "/activity", "/botctl", "/uptime")
+HTML_CT = "text/html; charset=utf-8"
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
 
+    def _token(self):
+        for part in self.headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == "ks_session":
+                return v
+        return ""
+
     def _authed(self):
         if not PASSWORD:
             return True
-        for part in self.headers.get("Cookie", "").split(";"):
-            k, _, v = part.strip().partition("=")
-            if k == "ks_session" and hmac.compare_digest(v, SESSION_TOKEN):
-                return True
-        return False
+        return X.session_valid(self._token())
 
-    def _send(self, status, body, ctype="text/html; charset=utf-8", extra=None):
+    def _send(self, status, body, ctype=HTML_CT, extra=None):
         if isinstance(body, str):
             body = body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
         for k, v in (extra or []):
             self.send_header(k, v)
         self.end_headers()
@@ -2392,9 +2402,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
 
+    def _login_page(self, status, msg=""):
+        self._send(status, render_login(msg), extra=[("Content-Security-Policy", X.csp())])
+
+    def _dash_page(self):
+        nonce = X.make_nonce()
+        self._send(200, render_page(read_config(), nonce), extra=[("Content-Security-Policy", X.csp(nonce))])
+
     def do_HEAD(self):
         self.send_response(200)
-        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.send_header("Content-type", HTML_CT)
         self.end_headers()
 
     def do_GET(self):
@@ -2403,13 +2420,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send(200, "OK", "text/plain; charset=utf-8")
             return
         if path == "/logout":
+            X.session_drop(self._token())
             self._redirect("/", [("Set-Cookie", "ks_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")])
             return
         if not self._authed():
-            if path in API_GET:
+            if path in API_GET or path.startswith("/api/"):
                 self._json(401, {"ok": False, "error": "Chưa đăng nhập"})
             else:
-                self._send(401, render_login())
+                self._login_page(401)
             return
         if path == "/api/gif":
             if not CHAT_ENABLED:
@@ -2424,14 +2442,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             else:
                 self._json(200, dict(data, ok=True))
             return
+        if path == "/api/giffav":
+            if not CHAT_ENABLED:
+                self._json(403, {"ok": False, "error": "Chat đang khóa"})
+                return
+            self._json(200, {"ok": True, "items": X.fav_list()})
+            return
         if path in API_GET:
             payload = {"/stats": read_stats, "/activity": read_activity, "/botctl": bot_status, "/uptime": read_uptime}[path]()
             self._json(200, payload)
             return
-        self._send(200, render_page(read_config()))
+        self._dash_page()
 
     def do_POST(self):
         path = self.path.split("?")[0]
+        if not X.same_origin(self.headers):
+            self._send(403, "Yêu cầu bị chặn (khác nguồn)", "text/plain; charset=utf-8")
+            return
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
@@ -2441,14 +2468,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if length > 4096:
                 self._send(413, "")
                 return
+            ip = X.client_ip(self)
+            wait = X.lock_remaining(ip)
+            if wait:
+                self._login_page(429, "Nhập sai nhiều lần, thử lại sau %d phút." % (wait // 60 + 1))
+                return
             parsed = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
             pw = parsed.get("password", [""])[0]
-            if PASSWORD and hmac.compare_digest(pw.encode(), PASSWORD.encode()):
+            if PASSWORD and X.check_password(pw, PASSWORD):
+                X.login_ok(ip)
+                tok = X.session_new()
                 secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
-                self._redirect("/", [("Set-Cookie", "ks_session=%s; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax%s" % (SESSION_TOKEN, secure))])
+                self._redirect("/", [("Set-Cookie", "ks_session=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Lax%s" % (tok, X.SESSION_TTL, secure))])
             else:
-                time.sleep(1.5)
-                self._send(401, render_login(error=True))
+                X.login_fail(ip)
+                time.sleep(1.0)
+                self._login_page(401, "Sai mật khẩu, thử lại.")
             return
 
         if not self._authed():
@@ -2492,6 +2527,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json(400, {"ok": False, "error": err})
                 return
             self._json(200, rpc_call(payload))
+            return
+
+        if path == "/api/giffav":
+            if not CHAT_ENABLED:
+                self._json(403, {"ok": False, "error": "Chat đang khóa"})
+                return
+            try:
+                body = json.loads(raw)
+                assert isinstance(body, dict)
+            except Exception:
+                self._json(400, {"ok": False, "error": "JSON không hợp lệ"})
+                return
+            items, err = X.fav_change(body.get("action"), body.get("url"), body.get("preview"))
+            if err:
+                self._json(400, {"ok": False, "error": err})
+            else:
+                self._json(200, {"ok": True, "items": items})
             return
 
         parsed = urllib.parse.parse_qs(raw, keep_blank_values=True)
@@ -2574,7 +2626,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._redirect("/")
 
     def log_message(self, format, *args):
-        quiet = ("/ping", "/healthz", "/stats", "/activity", "/botctl", "/uptime", "/api/rpc")
+        quiet = ("/ping", "/healthz", "/stats", "/activity", "/botctl", "/uptime", "/api/rpc", "/api/giffav")
         if self.path.split("?")[0] not in quiet:
             super().log_message(format, *args)
 
@@ -2594,6 +2646,8 @@ def run_web():
         print(f"🌐 Dashboard đang chạy ở cổng {port}")
     if not PASSWORD:
         print("⚠️  Chưa đặt DASHBOARD_PASSWORD -> tab Chat bị khóa, dashboard không có đăng nhập.")
+    elif len(PASSWORD) < 10:
+        print("⚠️  DASHBOARD_PASSWORD ngắn hơn 10 ký tự, nên đặt dài + có chữ, số, ký hiệu.")
     print("=" * 60, flush=True)
     server.serve_forever()
 
