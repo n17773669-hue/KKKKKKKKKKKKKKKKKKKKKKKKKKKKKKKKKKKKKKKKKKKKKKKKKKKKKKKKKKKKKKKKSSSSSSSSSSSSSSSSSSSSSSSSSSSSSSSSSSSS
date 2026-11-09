@@ -341,9 +341,8 @@ DEFAULT_CONFIG = {
     "status_mode": "online",
     "status_delay": 5,
     "status_messages": [
-        "🤖 {guilds} server, phục vụ {members} thành viên",
-        "💤 gõ {prefix}help để xem lệnh",
-        "🔥 Bot cực xịn 24/7"
+        "🤖 {guilds} server | {members} thành viên",
+        "Bot đã hoạt động {latency_status}"
     ],
     "bat_ai": True,
     "bat_caro": True,
@@ -355,9 +354,9 @@ DEFAULT_CONFIG = {
     "bat_bot_guard": True,
     "activity_type": "playing",
     "force_stream": False,
-    "platform": "ios",
+    "platform": "vr",
     "stream_url": "https://www.youtube.com/watch?v=9svI65nxVhc",
-    "site_title": "KSBot Command Center",
+    "site_title": "KS-BOT COMMAD",
     "bg_url": DEFAULT_BG,
     "bg_v2": True,
     "bg_dim": 60,
