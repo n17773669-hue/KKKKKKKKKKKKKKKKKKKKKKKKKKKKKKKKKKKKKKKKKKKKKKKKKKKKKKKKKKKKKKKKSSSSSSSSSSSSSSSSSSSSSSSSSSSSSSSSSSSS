@@ -16,7 +16,9 @@ import re
 import os
 
 import dash_extra as X
+
 CONFIG_FILE = "config.json"
+CONFIG_LOCK = threading.Lock()
 
 # ----------------------------------------------------------------------
 # Bảo mật: đặt biến môi trường DASHBOARD_PASSWORD (Bot-Hosting > Môi trường).
