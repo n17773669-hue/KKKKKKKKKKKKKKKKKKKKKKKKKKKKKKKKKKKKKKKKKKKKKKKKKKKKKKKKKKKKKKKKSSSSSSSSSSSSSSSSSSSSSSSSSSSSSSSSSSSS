@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import time
@@ -235,6 +236,17 @@ def init_words_db():
     CREATE TABLE IF NOT EXISTS vtv_settings (
         guild_id TEXT PRIMARY KEY,
         channel_id TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS noitu_games (
+        guild_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        current_phrase TEXT NOT NULL,
+        required_start TEXT NOT NULL,
+        used TEXT NOT NULL,
+        auto_bot INTEGER NOT NULL DEFAULT 0,
+        last_user_id TEXT,
+        PRIMARY KEY (guild_id, channel_id)
     );
 
     CREATE TABLE IF NOT EXISTS noitu_stats (
@@ -602,6 +614,90 @@ def smart_pick_start(used: set[str] | None = None, attempts: int = 5):
 # STATS
 # ============================================================
 
+# ============================================================
+# LƯU / KHÔI PHỤC VÁN NỐI TỪ
+# ============================================================
+
+HISTORY_SCAN_LIMIT = 200            # số tin gần nhất để quét tìm từ đang nối
+RESUME_MAX_AGE = 7 * 86400          # chỉ tự tiếp tục từ lịch sử nếu từ mới nhất chưa cũ quá 7 ngày
+
+BOT_WORD_RE = re.compile(r"KS-BOT nối:\s*\*\*([^*\n]+)\*\*")
+ROUND_RE = re.compile(r"\*\*([^*\n]+)\*\*\s*→\s*nối bằng")
+
+
+def save_game_row(game):
+    conn = open_words_db()
+    try:
+        conn.execute("""
+            INSERT INTO noitu_games
+            (guild_id, channel_id, current_phrase, required_start, used, auto_bot, last_user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, channel_id) DO UPDATE SET
+                current_phrase = excluded.current_phrase,
+                required_start = excluded.required_start,
+                used = excluded.used,
+                auto_bot = excluded.auto_bot,
+                last_user_id = excluded.last_user_id
+        """, (
+            str(game.guild_id), str(game.channel_id),
+            game.current_phrase or "", game.required_start or "",
+            json.dumps(sorted(game.used), ensure_ascii=False),
+            1 if game.auto_bot else 0,
+            None if game.last_user_id is None else str(game.last_user_id),
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_game_row(guild_id, channel_id):
+    conn = open_words_db()
+    try:
+        conn.execute(
+            "DELETE FROM noitu_games WHERE guild_id = ? AND channel_id = ?",
+            (str(guild_id), str(channel_id)),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def load_game_rows():
+    """{(guild_id, channel_id): {current_phrase, required_start, used, auto_bot, last_user_id}}"""
+    conn = open_words_db()
+    try:
+        rows = conn.execute(
+            "SELECT guild_id, channel_id, current_phrase, required_start, used, auto_bot, last_user_id "
+            "FROM noitu_games"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    out = {}
+    for gid, cid, phrase, req, used, auto_bot, last_user in rows:
+        try:
+            used_list = json.loads(used or "[]")
+        except Exception:
+            used_list = []
+        out[(int(gid), int(cid))] = {
+            "current_phrase": phrase,
+            "required_start": req,
+            "used": used_list,
+            "auto_bot": bool(auto_bot),
+            "last_user_id": int(last_user) if last_user else None,
+        }
+    return out
+
+
+def all_configured_channels():
+    conn = open_words_db()
+    try:
+        rows = conn.execute("SELECT guild_id, channel_id FROM noitu_settings").fetchall()
+    finally:
+        conn.close()
+    return [(int(g), int(c)) for g, c in rows]
+
+
 def add_stats(guild_id, user_id, **delta):
     allowed = {"wins", "games", "correct", "wrong", "earned"}
 
@@ -765,6 +861,9 @@ class NoituGame:
         # Người vừa nối thành công. Không được nối tiếp ngay lượt kế.
         self.last_user_id = None
 
+        # Tạm dừng để cập nhật bot (.savedata). Dừng thì không ai nối được.
+        self.paused = False
+
         self.lock = asyncio.Lock()
 
     def set_phrase(self, phrase):
@@ -809,6 +908,7 @@ class NoituCog(commands.Cog):
         self.vtv_games = {}
         self._lock = asyncio.Lock()
         self.auto_tasks = {}
+        self._resumed = False
         self.word_sync_task = asyncio.create_task(self._sync_words_background())
 
     def cog_unload(self):
@@ -966,6 +1066,219 @@ class NoituCog(commands.Cog):
     # START
     # --------------------------------------------------------
 
+    # --------------------------------------------------------
+    # LƯU / KHÔI PHỤC VÁN (sống sót qua update, restart, mất file)
+    # --------------------------------------------------------
+
+    def persist(self, game):
+        """Ghi trạng thái ván vào DB: đang chạy -> lưu, đã tắt -> xóa."""
+        try:
+            if game.running and game.current_phrase:
+                save_game_row(game)
+            else:
+                delete_game_row(game.guild_id, game.channel_id)
+        except Exception as e:
+            print(f"[NoiTu] Lỗi lưu ván: {e}")
+
+    async def pause_for_update(self):
+        """Gọi từ .savedata: tạm dừng mọi ván đang chạy và nhớ từ đang nối."""
+        paused = []
+
+        for key, game in list(self.games.items()):
+            if not game.running or game.paused:
+                continue
+
+            async with game.lock:
+                game.paused = True
+
+                task = self.auto_tasks.pop(key, None)
+                if task and not task.done():
+                    task.cancel()
+
+                self.persist(game)
+
+            paused.append((game.channel_id, game.current_phrase))
+
+            channel = self.bot.get_channel(game.channel_id)
+            if channel is not None:
+                try:
+                    await channel.send(
+                        "⏸️ **Nối Từ tạm dừng để cập nhật bot.**\n"
+                        f"🔗 Từ hiện tại: **{game.current_phrase}** → nối bằng **{game.required_start.upper()}**\n"
+                        "Bot bật lại sẽ tự tiếp tục đúng chỗ này."
+                    )
+                except discord.HTTPException:
+                    pass
+
+        return paused
+
+    @commands.hybrid_command(name="noiresume")
+    @commands.guild_only()
+    async def noiresume(self, ctx):
+        """Cho ván Nối Từ đang tạm dừng (sau .savedata) chạy tiếp."""
+        if not await self.require_manage(ctx):
+            return
+
+        game = self.games.get((ctx.guild.id, ctx.channel.id))
+
+        if not game or not game.running or not game.paused:
+            await self.send_notice(ctx.channel, "❌ Không có ván nào đang tạm dừng.", 4)
+            return
+
+        game.paused = False
+
+        await ctx.send(
+            "▶️ **Nối Từ tiếp tục!**\n"
+            f"🔗 **{game.current_phrase}** → nối bằng **{game.required_start.upper()}**"
+        )
+
+        me_id = self.bot.user.id if self.bot.user else 0
+        if game.auto_bot and game.last_user_id not in (None, me_id):
+            self.schedule_bot_turn(game)
+
+    async def scan_history(self, channel):
+        """
+        Đọc lịch sử kênh: tìm từ nối MỚI NHẤT (tin người chơi có ✅ của bot, hoặc từ bot đã nối,
+        hoặc từ mở đầu bot đưa ra) + gom các từ đã dùng trong ván hiện tại.
+        """
+        me_id = self.bot.user.id if self.bot.user else 0
+        found = {"current": None, "last_user": None, "time": None}
+        used = []
+        stopped = False
+        complete = False
+
+        def push(phrase, uid, msg):
+            used.append(phrase)
+            if found["current"] is None:
+                found.update(current=phrase, last_user=uid, time=msg.created_at)
+
+        try:
+            async for msg in channel.history(limit=HISTORY_SCAN_LIMIT):
+                text = msg.content or ""
+
+                if msg.author.id == me_id:
+                    if "Đã tắt Nối Từ" in text or "Kho từ đã hết sạch" in text:
+                        stopped = found["current"] is None
+                        complete = True
+                        break
+
+                    m = BOT_WORD_RE.search(text)
+                    if m:
+                        push(normalize_text(m.group(1)), me_id, msg)
+                        continue
+
+                    m = ROUND_RE.search(text)
+                    if m:
+                        push(normalize_text(m.group(1)), None, msg)
+                        if "Lượt mới bắt đầu" in text or "NỐI TỪ" in text:
+                            complete = True      # tới đầu ván -> đã gom đủ từ đã dùng
+                            break
+                    continue
+
+                if msg.author.bot:
+                    continue
+
+                if any(getattr(r.emoji, "id", None) == RIGHT_REACTION.id and r.me
+                       for r in msg.reactions):
+                    phrase = normalize_text(text)
+                    if len(phrase.split()) in ALLOWED_PHRASE_COUNTS:
+                        push(phrase, msg.author.id, msg)
+
+        except discord.HTTPException as e:
+            print(f"[NoiTu] Không đọc được lịch sử kênh {channel.id}: {e}")
+
+        return {
+            "current": found["current"],
+            "last_user": found["last_user"],
+            "time": found["time"],
+            "used": set(used),
+            "stopped": stopped,
+            "complete": complete,
+        }
+
+    async def resume_games(self):
+        """Khi bot online: nạp ván đã lưu trong DB, đối chiếu với lịch sử kênh rồi chạy tiếp."""
+        saved = load_game_rows()
+        keys = set(saved) | set(all_configured_channels())
+        resumed = 0
+
+        for key in keys:
+            gid, cid = key
+
+            if key in self.games:
+                continue
+
+            channel = self.bot.get_channel(cid)
+            if channel is None:
+                continue
+
+            row = saved.get(key)
+            hist = await self.scan_history(channel)
+
+            # Kênh đã được tắt Nối Từ (.stopnoitu) -> không bật lại.
+            if hist["stopped"]:
+                delete_game_row(gid, cid)
+                continue
+
+            if hist["current"]:
+                # Không có ván lưu mà từ mới nhất quá cũ -> bỏ qua, khỏi tự bật lại ván bỏ hoang.
+                if row is None and hist["time"] is not None:
+                    age = (discord.utils.utcnow() - hist["time"]).total_seconds()
+                    if age > RESUME_MAX_AGE:
+                        continue
+
+                phrase = hist["current"]
+                used = set(hist["used"])
+                if not hist["complete"] and row:
+                    used |= set(row["used"])
+                last_user = hist["last_user"]
+
+            elif row:
+                phrase = row["current_phrase"]
+                used = set(row["used"])
+                last_user = row["last_user_id"]
+
+            else:
+                continue
+
+            game = NoituGame(gid, cid)
+            game.running = True
+            game.set_phrase(phrase)
+            used.add(game.current_phrase)
+            game.used = used
+            game.last_user_id = last_user
+            game.auto_bot = bool(row and row["auto_bot"])
+
+            self.games[key] = game
+            self.persist(game)
+            resumed += 1
+
+            try:
+                await channel.send(
+                    "▶️ **Bot vừa bật lại — Nối Từ tiếp tục đúng chỗ cũ!**\n"
+                    f"🔗 **{game.current_phrase}** → nối bằng **{game.required_start.upper()}**"
+                )
+            except discord.HTTPException:
+                pass
+
+            me_id = self.bot.user.id if self.bot.user else 0
+            if game.auto_bot and game.last_user_id not in (None, me_id):
+                self.schedule_bot_turn(game)
+
+        if resumed:
+            print(f"[NoiTu] Đã tiếp tục {resumed} ván Nối Từ.")
+
+    @commands.Cog.listener("on_ready")
+    async def _noitu_on_ready(self):
+        if self._resumed:
+            return
+        self._resumed = True
+
+        try:
+            await self.resume_games()
+        except Exception as e:
+            print(f"[NoiTu] Lỗi tiếp tục ván: {type(e).__name__}: {e}")
+
     @commands.hybrid_command(name="setnoitu")
     @commands.guild_only()
     async def setnoitu(self, ctx):
@@ -1019,6 +1332,7 @@ class NoituCog(commands.Cog):
             game.used.add(normalize_text(phrase))
 
             self.games[key] = game
+            self.persist(game)
 
         await ctx.send(
             "🎮 **NỐI TỪ**\n"
@@ -1063,6 +1377,7 @@ class NoituCog(commands.Cog):
             game.set_phrase(new_phrase)
             game.used.add(normalize_text(new_phrase))
             game.last_user_id = None
+            self.persist(game)
 
         await ctx.send(
             f"🔄 **{game.current_phrase}** → nối bằng **{game.required_start}**"
@@ -1148,6 +1463,8 @@ class NoituCog(commands.Cog):
         if task and not task.done():
             task.cancel()
 
+        self.persist(game)
+
         await ctx.send(
             "🛑 **Đã tắt Nối Từ.**\n"
             "Dùng `.startnoi` để bật lại."
@@ -1181,7 +1498,7 @@ class NoituCog(commands.Cog):
             await asyncio.sleep(AUTO_BOT_DELAY)
 
             async with game.lock:
-                if not game.running or not game.auto_bot:
+                if not game.running or not game.auto_bot or game.paused:
                     return
 
                 channel = self.bot.get_channel(game.channel_id)
@@ -1206,6 +1523,7 @@ class NoituCog(commands.Cog):
 
                 # Dùng bot user id để giữ luật "không 2 lượt cùng người".
                 game.last_user_id = self.bot.user.id if self.bot.user else 0
+                self.persist(game)
 
                 # Bot nối xong mà người chơi hết đường -> bot thắng, mở lượt mới.
                 if not has_candidate(game.required_start, game.used):
@@ -1217,6 +1535,8 @@ class NoituCog(commands.Cog):
                         game.last_user_id = None
                     else:
                         game.running = False
+
+                    self.persist(game)
 
                     await channel.send(
                         self.win_text(
@@ -1261,7 +1581,7 @@ class NoituCog(commands.Cog):
 
         game = self.games.get(key)
 
-        if not game or not game.running:
+        if not game or not game.running or game.paused:
             return
 
         # Các command bắt đầu bằng . không tính là lượt chơi.
@@ -1359,6 +1679,8 @@ class NoituCog(commands.Cog):
             game.set_phrase(phrase)
             game.last_user_id = message.author.id
 
+            self.persist(game)
+
             add_coin(message.author.id, PER_VALID_REWARD)
 
             add_stats(
@@ -1405,6 +1727,8 @@ class NoituCog(commands.Cog):
                 else:
 
                     game.running = False
+
+                self.persist(game)
 
                 # Tin thắng ván gọn kiểu Neko (1 khối, dễ nhìn).
                 await message.channel.send(
