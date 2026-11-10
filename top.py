@@ -26,7 +26,7 @@ from pathlib import Path
 
 import aiohttp
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from database import DB_NAME
@@ -301,7 +301,7 @@ def render_board(rows, tab, avatars):
     _draw_right_title(d)
     _draw_top3(img, d, rows, avatars, RIGHT3, k=1.18)
     buf = io.BytesIO()
-    img.save(buf, "PNG")
+    img.convert("RGB").save(buf, "JPEG", quality=90)
     return buf.getvalue()
 
 
@@ -390,7 +390,7 @@ class TopView(discord.ui.View):
         self.tab = tab
         self._sync()
         await interaction.edit_original_response(
-            attachments=[discord.File(io.BytesIO(png), "top.png")], view=self)
+            attachments=[discord.File(io.BytesIO(png), "top.jpg")], view=self)
 
     @discord.ui.button(label="Server", emoji="🏠")
     async def b_server(self, interaction, button):
@@ -418,12 +418,34 @@ class TopView(discord.ui.View):
 # COG
 # ----------------------------------------------------------------------
 class TopCog(commands.Cog):
+    FRESH = 45        # giây: quá thời gian này thì dựng lại ngầm
+    MAX_STALE = 600   # giây: cũ hơn nữa thì buộc phải chờ dựng mới
+
     def __init__(self, bot):
         self.bot = bot
-        self._png_cache = {}   # (tab, guild_id) -> (time, bytes)
+        self._png_cache = {}      # (tab, guild_id) -> (time, bytes)
+        self._refreshing = set()
 
     async def cog_load(self):
         ensure_activity_table()
+        await asyncio.to_thread(_base)          # dựng sẵn nền 1 lần lúc khởi động
+        self.refresh_loop.start()
+
+    async def cog_unload(self):
+        self.refresh_loop.cancel()
+
+    @tasks.loop(seconds=60)
+    async def refresh_loop(self):
+        """Dựng sẵn ảnh Tuần/Tháng (dùng chung mọi server) để bấm là ra liền."""
+        for tab in ("week", "month"):
+            try:
+                await self._build((tab, 0), tab, None)
+            except Exception as e:
+                print(f"[Top] lỗi dựng sẵn {tab}: {e}")
+
+    @refresh_loop.before_loop
+    async def _before_refresh(self):
+        await self.bot.wait_until_ready()
 
     @commands.Cog.listener()
     async def on_command_completion(self, ctx):
@@ -461,30 +483,48 @@ class TopCog(commands.Cog):
         else:
             picked = await asyncio.to_thread(query_active_by_coin, TAB_DAYS[tab], 7)
 
-        rows = []
-        for uid, coin in picked:
-            name, url = await self._resolve(uid, guild)
-            rows.append({"name": name, "coin": coin, "avatar_url": url})
-        return rows
+        g = guild if tab == "server" else None   # Tuần/Tháng dùng chung nên không lấy nick theo server
+        results = await asyncio.gather(*(self._resolve(uid, g) for uid, _ in picked))
+        return [{"name": n, "coin": coin, "avatar_url": u} for (n, u), (_, coin) in zip(results, picked)]
 
-    async def make_png(self, tab, guild):
-        key = (tab, guild.id if (tab == "server" and guild) else 0)
-        hit = self._png_cache.get(key)
-        if hit and time.time() - hit[0] < 45:
-            return hit[1]
+    async def _build(self, key, tab, guild):
         rows = await self._get_rows(tab, guild)
         avatars = await fetch_avatars([r["avatar_url"] for r in rows])
         png = await asyncio.to_thread(render_board, rows, tab, avatars)
         self._png_cache[key] = (time.time(), png)
         return png
 
+    async def _refresh(self, key, tab, guild):
+        try:
+            await self._build(key, tab, guild)
+        except Exception as e:
+            print(f"[Top] lỗi làm mới {key}: {e}")
+        finally:
+            self._refreshing.discard(key)
+
+    async def make_png(self, tab, guild):
+        key = (tab, guild.id if (tab == "server" and guild) else 0)
+        hit = self._png_cache.get(key)
+        now = time.time()
+        if hit:
+            if now - hit[0] > self.FRESH and key not in self._refreshing:
+                self._refreshing.add(key)
+                asyncio.create_task(self._refresh(key, tab, guild))
+            if now - hit[0] < self.MAX_STALE:
+                return hit[1]          # trả ảnh có sẵn ngay, làm mới chạy ngầm
+        return await self._build(key, tab, guild)
+
     @commands.hybrid_command(name="top")
     async def cmd_top(self, ctx):
         """Xem bảng xếp hạng đại gia."""
-        async with ctx.typing():
+        key = ("server", ctx.guild.id if ctx.guild else 0)
+        if key in self._png_cache:
             png = await self.make_png("server", ctx.guild)
+        else:
+            async with ctx.typing():
+                png = await self.make_png("server", ctx.guild)
         view = TopView(self, ctx.author.id, ctx.guild)
-        view.message = await ctx.send(file=discord.File(io.BytesIO(png), "top.png"), view=view)
+        view.message = await ctx.send(file=discord.File(io.BytesIO(png), "top.jpg"), view=view)
 
 
 async def setup(bot):
