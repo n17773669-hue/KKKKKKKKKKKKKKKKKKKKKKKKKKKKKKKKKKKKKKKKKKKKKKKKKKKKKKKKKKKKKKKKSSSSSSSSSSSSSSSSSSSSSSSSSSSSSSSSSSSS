@@ -13,4 +13,4 @@ requests
 edge-tts
 nodejs
 wavelink>=3.0.0
-
+pillow
