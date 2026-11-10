@@ -13,9 +13,10 @@ Cần: pip install pillow aiohttp
     Tháng  : tất cả người đã dùng bot trong 30 ngày gần nhất (mọi server), xếp theo coin
 
 Chống mờ (bản này):
-  * CHỈ gửi phần khung bảng bên trái (CARD_CROP), bỏ phần bục podium bên phải
-    -> Discord không phải thu nhỏ cả ảnh 1811px nữa, bảng hiển thị to gấp ~1,6 lần.
-  * Giữ nguyên độ phân giải gốc (không resize, không làm nét thêm).
+  * Ghép lại bố cục gọn (~1230x808, tỉ lệ gần khung hiển thị của Discord): bảng giữ
+    nguyên cỡ gốc, bục top 3 bên phải thu nhỏ POD_SCALE rồi đặt cạnh -> chữ trong bảng
+    không bị Discord co nhỏ như khi gửi cả ảnh 1811px.
+  * Không làm nét thêm, không nén mất dữ liệu.
   * Lưu LOSSLESS (WebP lossless, lỗi thì PNG) -> không nhòe màu ở viền chữ.
   * Hình tròn / icon coin / thanh tab vẽ supersample 4-6x rồi thu nhỏ -> viền mịn.
 
@@ -68,9 +69,19 @@ FONT_CANDIDATES = [
 # ----------------------------------------------------------------------
 W, H = 1811, 868
 
-# Vùng cắt gửi đi: chỉ khung bảng bên trái (x0, y0, x1, y1).
-# Nếu dư nền tím / cắt lẹm viền card thì chỉnh 4 số này.
-CARD_CROP = (230, 10, 810, 830)
+# Vùng cắt (toạ độ trên khung 1811x868). Chỉnh nếu dư nền / lẹm viền.
+CARD_CROP = (236, 14, 806, 822)      # khung bảng bên trái (giữ nguyên cỡ)
+POD_CROP = (930, 20, 1795, 835)      # tiêu đề "Leaderboard" + bục top 3 bên phải
+POD_SCALE = 0.78                     # thu nhỏ phần bục (to hơn = bục lớn nhưng ảnh rộng hơn)
+POD_OVERLAP = 14                     # px chồng lên mép bảng
+POD_FEATHER = 36                     # độ mờ mép khi ghép (che đường nối nền)
+
+# Avatar trên bục bên phải
+RIGHT_AVATARS = {
+    1: dict(c=(1369, 425), r=134),
+    2: dict(c=(1085, 470), r=108),
+    3: dict(c=(1642, 473), r=105),
+}
 
 LEFT_TOP3 = {
     1: dict(c=(521, 300), r=86, name_y=411, coin_y=441, wmax=200, name_px=34, coin_px=24),
@@ -196,15 +207,14 @@ def _drop_missing(text, font):
             if g.size == msize and bytes(g) == missing:
                 continue
             keep.append(ch)
-        out = " ".join("".join(keep).split())
-        return out or text
+        return " ".join("".join(keep).split())     # có thể rỗng -> _fit_text tự dùng fallback
     except Exception:
         return text
 
 
-def _fit_text(text, base_px, max_w, min_px):
+def _fit_text(text, base_px, max_w, min_px, fallback="Người chơi"):
     """Thu nhỏ chữ cho vừa; chỉ rút gọn (…) khi đã xuống cỡ nhỏ nhất mà vẫn dài."""
-    text = _drop_missing(text, _font_for_text(text, int(base_px)))
+    text = _drop_missing(text, _font_for_text(text, int(base_px))) or fallback
     px = int(base_px)
     while px > min_px:
         f = _font_for_text(text, px)
@@ -465,7 +475,8 @@ def _draw_left_top3(img, p, rows, avatars):
         cx, cy = cfg["c"]
         _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")), RIM[rank])
 
-        f, name = _fit_text(clean_name(row["name"]), cfg["name_px"], cfg["wmax"], cfg["name_px"] - 6)
+        f, name = _fit_text(clean_name(row["name"]), cfg["name_px"], cfg["wmax"], cfg["name_px"] - 6,
+                            row.get("fallback") or "Người chơi")
         p.text((cx, cfg["name_y"]), name, f, stroke=0)
         p.coin_line(cx, cfg["coin_y"], row["coin"], cfg["wmax"], cfg["coin_px"], align="center")
 
@@ -480,8 +491,40 @@ def _draw_rows(img, p, rows, avatars):
         _paste_avatar_inside(img, ROW_AVATAR["x"], cy, ROW_AVATAR["r"],
                              avatars.get(row.get("avatar_url")))
         pw = p.coin_line(ROW_RIGHT, cy, row["coin"], 200, 26, align="right")   # coin ở bên phải
-        f, name = _fit_text(clean_name(row["name"]), 35, ROW_RIGHT - pw - 16 - ROW_TEXT_X, 24)
+        f, name = _fit_text(clean_name(row["name"]), 35, ROW_RIGHT - pw - 16 - ROW_TEXT_X, 24,
+                            row.get("fallback") or "Người chơi")
         p.text((ROW_TEXT_X, cy), name, f, anchor="lm", stroke=0)               # tên ở giữa-trái
+
+
+def _draw_right_top3(img, rows, avatars):
+    """Cột phải chỉ thay avatar; giữ nguyên số hạng, nhãn và bục trong khung."""
+    for rank, cfg in RIGHT_AVATARS.items():
+        if rank > len(rows):
+            continue
+        row = rows[rank - 1]
+        cx, cy = cfg["c"]
+        _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")), RIM[rank])
+
+
+def _feather_mask(w, h, f):
+    m = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(m).rectangle((f, f, w - f, h - f), fill=255)
+    return m.filter(ImageFilter.GaussianBlur(f / 2.2))
+
+
+def _compose(img):
+    """Bảng (cỡ gốc) + bục (thu nhỏ) ghép thành 1 ảnh gọn, nền nối mượt."""
+    card = img.crop(CARD_CROP)
+    pod = img.crop(POD_CROP)
+    pw, ph = int(pod.width * POD_SCALE), int(pod.height * POD_SCALE)
+    pod = pod.resize((pw, ph), Image.LANCZOS)
+    cw, ch = card.size
+    cw_total, ch_total = cw + pw - POD_OVERLAP, ch
+    bg = img.crop((CARD_CROP[0], CARD_CROP[1], POD_CROP[2], CARD_CROP[3])).resize(
+        (cw_total, ch_total), Image.LANCZOS).filter(ImageFilter.GaussianBlur(45))
+    bg.paste(card, (0, 0))
+    bg.paste(pod, (cw - POD_OVERLAP, (ch_total - ph) // 2), _feather_mask(pw, ph, POD_FEATHER))
+    return bg
 
 
 OUT_NAME = "top.webp"
@@ -511,14 +554,14 @@ def _tab_base(tab):
 
 
 def render_board(rows, tab, avatars):
-    """Vẽ ở độ phân giải gốc, cắt đúng khung bảng, lưu lossless. Không resize."""
+    """Vẽ ở độ phân giải gốc, ghép bảng + bục, lưu lossless."""
     img = _tab_base(tab)
     p = _Painter()
     _draw_left_top3(img, p, rows, avatars)
     _draw_rows(img, p, rows, avatars)
+    _draw_right_top3(img, rows, avatars)
     p.flush(img)
-    out = img.convert("RGB").crop(CARD_CROP)
-    return _encode(out)
+    return _encode(_compose(img.convert("RGB")))
 
 
 # ----------------------------------------------------------------------
@@ -694,12 +737,12 @@ class TopCog(commands.Cog):
             try:
                 user = await self.bot.fetch_user(uid)
             except Exception:
-                return "Người chơi ẩn", None
+                return "Người chơi ẩn", None, "Người chơi ẩn"
         try:
             url = user.display_avatar.replace(size=512, format="png").url
         except Exception:
             url = str(user.display_avatar.url)
-        return user.display_name, url
+        return user.display_name, url, user.name
 
     async def _get_rows(self, tab, guild):
         if tab == "server" and guild is not None:
@@ -717,7 +760,8 @@ class TopCog(commands.Cog):
 
         g = guild if tab == "server" else None   # Tuần/Tháng dùng chung nên không lấy nick theo server
         results = await asyncio.gather(*(self._resolve(uid, g) for uid, _ in picked))
-        return [{"name": n, "coin": coin, "avatar_url": u} for (n, u), (_, coin) in zip(results, picked)]
+        return [{"name": n, "coin": coin, "avatar_url": u, "fallback": fb}
+                for (n, u, fb), (_, coin) in zip(results, picked)]
 
     async def _build(self, key, tab, guild):
         rows = await self._get_rows(tab, guild)
