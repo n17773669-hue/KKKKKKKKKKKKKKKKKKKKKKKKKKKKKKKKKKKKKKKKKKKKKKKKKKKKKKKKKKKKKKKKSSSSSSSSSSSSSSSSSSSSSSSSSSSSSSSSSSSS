@@ -2,7 +2,7 @@
 top.py - Bảng xếp hạng đại gia dạng ẢNH (vẽ trực tiếp lên khung assets/top.png)
 
 Cần có trong thư mục assets/ (cạnh file này):
-    top.png                    <- ảnh khung 1811x868 (đúng bản bạn gửi)
+    top.png                    <- ảnh khung 1811x868
     BeVietnamPro-Bold.ttf      <- font tiếng Việt (không có thì tự dùng DejaVu/Arial)
 
 Cần: pip install pillow aiohttp
@@ -12,16 +12,14 @@ Cần: pip install pillow aiohttp
     Tuần   : tất cả người đã dùng bot trong 7 ngày gần nhất (mọi server), xếp theo coin
     Tháng  : tất cả người đã dùng bot trong 30 ngày gần nhất (mọi server), xếp theo coin
 
-Lưu ý: "đã dùng bot" được ghi từ lúc file này chạy (bảng top_activity trong DB),
-nên Tuần/Tháng sẽ đầy dần theo thời gian.
+Chống mờ (bản này):
+  * CHỈ gửi phần khung bảng bên trái (CARD_CROP), bỏ phần bục podium bên phải
+    -> Discord không phải thu nhỏ cả ảnh 1811px nữa, bảng hiển thị to gấp ~1,6 lần.
+  * Giữ nguyên độ phân giải gốc (không resize, không làm nét thêm).
+  * Lưu LOSSLESS (WebP lossless, lỗi thì PNG) -> không nhòe màu ở viền chữ.
+  * Hình tròn / icon coin / thanh tab vẽ supersample 4-6x rồi thu nhỏ -> viền mịn.
 
-Chống mờ:
-  * Vẽ trực tiếp ở độ phân giải GỐC của khung (1811x868), không thu nhỏ rồi phóng to.
-  * Hình tròn / icon coin / thanh tab được vẽ supersample 4-6x rồi thu nhỏ -> viền mịn.
-  * Avatar tải size 512 rồi thu nhỏ bằng LANCZOS + làm nét nhẹ.
-  * Chữ vẽ trực tiếp ở kích thước thật, có viền + bóng mờ để nổi trên nền.
-
-Xem thử nhanh không cần Discord:  python top.py   -> tạo top_preview_*.png
+Xem thử nhanh không cần Discord:  python top.py   -> tạo top_preview_*.webp
 """
 import asyncio
 import io
@@ -34,7 +32,7 @@ from pathlib import Path
 
 import aiohttp
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from database import DB_NAME
@@ -65,26 +63,22 @@ FONT_CANDIDATES = [
 ]
 
 # ----------------------------------------------------------------------
-# HÌNH HỌC KHUNG - toạ độ THẬT trên ảnh khung 1811x868 (không quy đổi nữa)
+# HÌNH HỌC KHUNG - toạ độ THẬT trên ảnh khung 1811x868
 # Nếu thấy lệch vài px thì chỉnh ở đây (c = tâm, r = bán kính avatar).
 # ----------------------------------------------------------------------
 W, H = 1811, 868
 
-# Cột trái: avatar + tên + coin (top 1-2-3)
+# Vùng cắt gửi đi: chỉ khung bảng bên trái (x0, y0, x1, y1).
+# Nếu dư nền tím / cắt lẹm viền card thì chỉnh 4 số này.
+CARD_CROP = (230, 10, 810, 830)
+
 LEFT_TOP3 = {
     1: dict(c=(521, 300), r=86, name_y=411, coin_y=441, wmax=200, name_px=34, coin_px=24),
     2: dict(c=(335, 332), r=71, name_y=419, coin_y=445, wmax=172, name_px=27, coin_px=21),
     3: dict(c=(705, 332), r=68, name_y=419, coin_y=445, wmax=172, name_px=27, coin_px=21),
 }
 
-# Cột phải (bục): chỉ thay avatar, giữ nguyên số hạng/nhãn/bục của khung
-RIGHT_AVATARS = {
-    1: dict(c=(1369, 425), r=134),
-    2: dict(c=(1085, 470), r=108),
-    3: dict(c=(1642, 473), r=105),
-}
-
-# Bốn thanh hạng 4-7 ở cột trái
+# Bốn thanh hạng 4-7
 ROW_TOPS = [469, 552, 637, 723]
 ROW_H = 72
 ROW_AVATAR = dict(x=362, r=30)
@@ -98,7 +92,6 @@ TAB_PILL_W = 148
 TABS = [("server", "Server"), ("week", "Tuần"), ("month", "Tháng")]
 TAB_DAYS = {"week": 7, "month": 30}
 
-OUT_W = 1100          # chiều rộng ảnh gửi đi (vẽ ở 1811 rồi thu nhỏ bằng LANCZOS -> chữ nét; 0 = giữ nguyên)
 RIM_W = 3             # độ dày viền mảnh ở mép avatar (0 = tắt)
 RIM = {1: (255, 205, 70), 2: (200, 218, 255), 3: (242, 156, 98)}   # vàng / bạc / đồng
 
@@ -491,25 +484,15 @@ def _draw_rows(img, p, rows, avatars):
         p.text((ROW_TEXT_X, cy), name, f, anchor="lm", stroke=0)               # tên ở giữa-trái
 
 
-def _draw_right_top3(img, rows, avatars):
-    """Cột phải chỉ thay avatar; giữ nguyên số hạng, nhãn và bục trong khung."""
-    for rank, cfg in RIGHT_AVATARS.items():
-        if rank > len(rows):
-            continue
-        row = rows[rank - 1]
-        cx, cy = cfg["c"]
-        _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")), RIM[rank])
-
-
 OUT_NAME = "top.webp"
 
 
 def _encode(img):
-    """WebP chất lượng cao (~0,3 MB) để upload nhanh; nếu lỗi thì dùng PNG."""
+    """Lossless: WebP lossless (nhẹ), lỗi thì PNG. Không nén mất dữ liệu -> không nhòe viền chữ."""
     global OUT_NAME
     buf = io.BytesIO()
     try:
-        img.save(buf, "WEBP", quality=94, method=3)
+        img.save(buf, "WEBP", lossless=True, quality=100, method=4)
         OUT_NAME = "top.webp"
     except Exception:
         buf = io.BytesIO()
@@ -528,18 +511,13 @@ def _tab_base(tab):
 
 
 def render_board(rows, tab, avatars):
-    """Dùng một khung cho Server/Tuần/Tháng; chỉ đổi tab đang sáng."""
+    """Vẽ ở độ phân giải gốc, cắt đúng khung bảng, lưu lossless. Không resize."""
     img = _tab_base(tab)
     p = _Painter()
     _draw_left_top3(img, p, rows, avatars)
     _draw_rows(img, p, rows, avatars)
-    _draw_right_top3(img, rows, avatars)
     p.flush(img)
-    out = img.convert("RGB")
-    if OUT_W and OUT_W < out.width:
-        h = int(round(out.height * OUT_W / out.width))
-        out = out.resize((OUT_W, h), Image.LANCZOS).filter(
-            ImageFilter.UnsharpMask(radius=0.9, percent=45, threshold=2))
+    out = img.convert("RGB").crop(CARD_CROP)
     return _encode(out)
 
 
@@ -668,9 +646,9 @@ class TopCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self._png_cache = {}      # (tab, guild_id) -> (time, bytes)
+        self._png_cache = {}      # (tab, guild_id) -> (time, bytes, sig)
         self._refreshing = set()
-        self._used = {}           # (tab, guild_id) -> lần gọi gần nhất
+        self._used = {}
         self._prewarmed = False
         self._ok = False
         self._render_sem = asyncio.Semaphore(1)   # mỗi lúc chỉ vẽ 1 ảnh, không dồn CPU
@@ -680,7 +658,6 @@ class TopCog(commands.Cog):
         try:
             await asyncio.to_thread(_base)      # nạp sẵn nền 1 lần lúc khởi động
         except Exception as e:
-            # thiếu ảnh/lỗi ảnh thì KHÔNG làm sập bot, chỉ báo log
             print(f"[Top] ⚠️ Chưa dựng được bảng xếp hạng ảnh: {e}")
             return
         self._ok = True
@@ -822,5 +799,7 @@ if __name__ == "__main__":
     rows = [{"name": n, "coin": c, "avatar_url": f"u{i}"} for i, (n, c) in enumerate(zip(names, coins))]
     av = {f"u{i}": _fake_avatar(i) for i in range(7)}
     for t in ("server", "week", "month"):
-        Path(f"top_preview_{t}.{OUT_NAME.split('.')[-1]}").write_bytes(render_board(rows, t, av))
-        print("đã tạo", f"top_preview_{t}.{OUT_NAME.split('.')[-1]}")
+        data = render_board(rows, t, av)
+        fn = f"top_preview_{t}.{OUT_NAME.split('.')[-1]}"
+        Path(fn).write_bytes(data)
+        print("đã tạo", fn)
