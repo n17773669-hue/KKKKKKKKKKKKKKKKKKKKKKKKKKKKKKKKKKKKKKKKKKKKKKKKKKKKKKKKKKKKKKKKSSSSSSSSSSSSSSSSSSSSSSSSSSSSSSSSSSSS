@@ -21,6 +21,7 @@ import collections
 import contextvars
 import datetime
 import hashlib
+import importlib
 import io
 import json
 import os
@@ -319,13 +320,12 @@ STATE_VARS = [
     "LIXI_CLAIMED",           # ai đã nhận lì xì đợt hiện tại
     "LIXI_ACTIVE_EVENT",      # đợt lì xì đang hiệu lực
     "LIXI_EVENT_COUNTER",     # số thứ tự đợt lì xì
-    "WILD_NEXT_SPAWN",        # giờ thú hoang xuất hiện tiếp theo
-    "ACTIVE_WILD_PETS",       # thú hoang đang xuất hiện
 ]
 _state_raw = {}
 _state_ready = False
 _state_last = ""
 _bot_mod = None
+_BOT = None                  # đối tượng bot, gán trong StorageCog.cog_load
 
 
 def _enc(v):
@@ -357,7 +357,7 @@ def _bot_module():
         return _bot_mod
     for mod in list(sys.modules.values()):
         try:
-            if hasattr(mod, "update_user_full") and hasattr(mod, "ALL_PETS"):
+            if hasattr(mod, "AFK_USERS") and hasattr(mod, "DIEM_DANH_TRACKER"):
                 _bot_mod = mod
                 return mod
         except Exception:
@@ -427,8 +427,7 @@ def _save_state():
             active = set(getattr(mod, "LIXI_ACTIVE_EVENT", {}).values())
             cur = {k: v for k, v in cur.items() if k in active}
         data[entry] = _enc(cur)
-    bm = _bot_module()
-    lobbies = getattr(bm, "game_lobbies", None) if bm else None
+    lobbies = getattr(_BOT, "game_lobbies", None)
     if isinstance(lobbies, dict):
         data["__ww_channels"] = list(lobbies.keys())
     try:
@@ -885,35 +884,44 @@ def _parse(raw):
 
 
 def _patch_bot_module():
-    """Tự gắn nhật ký coin vào update_user_full() và tắt Supabase — KHÔNG cần sửa bot.py."""
-    for mod in list(sys.modules.values()):
+    """Tự gắn nhật ký coin vào update_user_full() (nằm trong database.py) và tắt Supabase — KHÔNG cần sửa bot.py."""
+    try:
+        mod = sys.modules.get("database") or sys.modules.get("cogs.database")
+        if mod is None:
+            mod = importlib.import_module("database")
+    except Exception as e:
+        print(f"[Storage] Không nạp được module database để gắn nhật ký coin: {type(e).__name__}: {e}")
+        return
+    if not hasattr(mod, "update_user_full"):
+        return
+    orig = mod.update_user_full
+    if getattr(orig, "_ks_patched", False):
+        return
+    db = getattr(mod, "DB_NAME", _db_path)
+
+    def patched(user_id, coin, level, *args, _orig=orig, _db=db, **kwargs):
         try:
-            if not (hasattr(mod, "update_user_full") and hasattr(mod, "ALL_PETS")):
-                continue
+            conn = sqlite3.connect(_db, timeout=5)
+            row = conn.execute("SELECT coin FROM users WHERE user_id = ?", (str(user_id),)).fetchone()
+            conn.close()
+            if row is not None:
+                TRACKER.record_coin(user_id, row[0], coin, level)
+        except Exception:
+            pass
+        return _orig(user_id, coin, level, *args, **kwargs)
+
+    patched._ks_patched = True
+    mod.update_user_full = patched
+    # Các module khác đã `from database import update_user_full` từ trước thì vẫn đang giữ bản gốc -> gán lại bản đã vá
+    for other in list(sys.modules.values()):
+        try:
+            if other is not mod and getattr(other, "update_user_full", None) is orig:
+                other.update_user_full = patched
         except Exception:
             continue
-        if getattr(mod.update_user_full, "_ks_patched", False):
-            return
-        orig = mod.update_user_full
-        db = getattr(mod, "DB_NAME", _db_path)
-
-        def patched(user_id, coin, level, exp, streak, last_streak_time, history_tx, _orig=orig, _db=db):
-            try:
-                conn = sqlite3.connect(_db, timeout=5)
-                row = conn.execute("SELECT coin FROM users WHERE user_id = ?", (str(user_id),)).fetchone()
-                conn.close()
-                if row is not None:
-                    TRACKER.record_coin(user_id, row[0], coin, level)
-            except Exception:
-                pass
-            return _orig(user_id, coin, level, exp, streak, last_streak_time, history_tx)
-
-        patched._ks_patched = True
-        mod.update_user_full = patched
-        if hasattr(mod, "supabase"):
-            mod.supabase = None                 # dữ liệu giờ nằm ở kênh Discord
-        print("[Storage] Đã gắn nhật ký coin + tắt Supabase.")
-        return
+    if hasattr(mod, "supabase"):
+        mod.supabase = None                 # dữ liệu giờ nằm ở kênh Discord
+    print("[Storage] Đã gắn nhật ký coin + tắt Supabase.")
 
 
 def _patch_noitu_coin():
@@ -941,7 +949,8 @@ class StorageCog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        global _task
+        global _task, _BOT
+        _BOT = self.bot
         _patch_bot_module()
         _apply_state()
         prev = getattr(self.bot, "_before_invoke", None)
