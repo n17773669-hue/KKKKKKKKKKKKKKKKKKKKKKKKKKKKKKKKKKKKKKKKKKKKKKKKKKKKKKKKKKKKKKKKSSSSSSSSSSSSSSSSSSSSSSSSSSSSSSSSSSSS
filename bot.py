@@ -1284,6 +1284,7 @@ async def main():
         await bot.load_extension("dashboard_bridge")
         # --- game mới tách ra ---
         await bot.load_extension("casino")
+        await bot.load_extension("top")
         await bot.load_extension("masoi")
 
         asyncio.create_task(dashboard_stats_loop())
