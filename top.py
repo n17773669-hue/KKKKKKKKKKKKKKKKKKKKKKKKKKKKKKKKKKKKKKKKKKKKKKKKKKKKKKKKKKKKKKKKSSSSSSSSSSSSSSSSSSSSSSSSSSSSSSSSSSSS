@@ -14,7 +14,7 @@ Cần: pip install pillow aiohttp
 
 Chống mờ (bản này):
   * Ghép lại bố cục gọn (~1230x808, tỉ lệ gần khung hiển thị của Discord): bảng giữ
-    nguyên cỡ gốc, bục top 3 bên phải thu nhỏ POD_SCALE rồi đặt cạnh -> chữ trong bảng
+    nguyên cỡ gốc, bục top 3 bên phải thu nhỏ POD_SCALE rồi nối liền nền -> chữ trong bảng
     không bị Discord co nhỏ như khi gửi cả ảnh 1811px.
   * Không làm nét thêm, không nén mất dữ liệu.
   * Lưu LOSSLESS (WebP lossless, lỗi thì PNG) -> không nhòe màu ở viền chữ.
@@ -71,10 +71,10 @@ W, H = 1811, 868
 
 # Vùng cắt (toạ độ trên khung 1811x868). Chỉnh nếu dư nền / lẹm viền.
 CARD_CROP = (236, 14, 806, 822)      # khung bảng bên trái (giữ nguyên cỡ)
-POD_CROP = (930, 20, 1795, 835)      # tiêu đề "Leaderboard" + bục top 3 bên phải
+POD_X = (930, 1795)                  # cột x lấy phần bục + tiêu đề (lấy full chiều cao khung)
 POD_SCALE = 0.78                     # thu nhỏ phần bục (to hơn = bục lớn nhưng ảnh rộng hơn)
-POD_OVERLAP = 14                     # px chồng lên mép bảng
-POD_FEATHER = 36                     # độ mờ mép khi ghép (che đường nối nền)
+CARD_FADE = 16                       # mép phải của bảng mờ dần vào nền (px)
+POD_VFADE = 48                       # mép trên/dưới của bục mờ dần vào nền trơn (px)
 
 # Avatar trên bục bên phải
 RIGHT_AVATARS = {
@@ -506,25 +506,50 @@ def _draw_right_top3(img, rows, avatars):
         _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")), RIM[rank])
 
 
-def _feather_mask(w, h, f):
-    m = Image.new("L", (w, h), 0)
-    ImageDraw.Draw(m).rectangle((f, f, w - f, h - f), fill=255)
-    return m.filter(ImageFilter.GaussianBlur(f / 2.2))
+def _smooth_fill(strip, w, h):
+    """Nền trơn: lấy dải pixel mép, làm mượt theo chiều ngang, rồi lấp đầy theo chiều dọc."""
+    small = strip.resize((max(2, w // 70), 1), Image.BOX)
+    return small.resize((w, max(1, h)), Image.BICUBIC)
 
 
 def _compose(img):
-    """Bảng (cỡ gốc) + bục (thu nhỏ) ghép thành 1 ảnh gọn, nền nối mượt."""
+    """Bảng (cỡ gốc) + bục (thu nhỏ) ghép thành 1 ảnh gọn, nền liền mạch không lộ đường nối."""
     card = img.crop(CARD_CROP)
-    pod = img.crop(POD_CROP)
+    cw, ch = card.size
+    # Bục: lấy toàn chiều cao khung gốc rồi thu nhỏ
+    pod = img.crop((POD_X[0], 0, POD_X[1], img.height))
     pw, ph = int(pod.width * POD_SCALE), int(pod.height * POD_SCALE)
     pod = pod.resize((pw, ph), Image.LANCZOS)
-    cw, ch = card.size
-    cw_total, ch_total = cw + pw - POD_OVERLAP, ch
-    bg = img.crop((CARD_CROP[0], CARD_CROP[1], POD_CROP[2], CARD_CROP[3])).resize(
-        (cw_total, ch_total), Image.LANCZOS).filter(ImageFilter.GaussianBlur(45))
-    bg.paste(card, (0, 0))
-    bg.paste(pod, (cw - POD_OVERLAP, (ch_total - ph) // 2), _feather_mask(pw, ph, POD_FEATHER))
-    return bg
+    top = max(0, (ch - ph) // 2)
+    bot = max(0, ch - top - ph)
+    right = Image.new("RGB", (pw, ch))
+    # Dải trên/dưới bục: nền tím trơn (không kéo dãn hoa văn -> không bị vệt mờ)
+    if top > 0:
+        right.paste(_smooth_fill(pod.crop((0, 0, pw, 3)), pw, top + POD_VFADE), (0, 0))
+    if bot > 0:
+        right.paste(_smooth_fill(pod.crop((0, ph - 3, pw, ph)), pw, bot + POD_VFADE),
+                    (0, ch - bot - POD_VFADE))
+    # Bục: mép trên/dưới mờ dần vào nền trơn
+    m = Image.new("L", (pw, ph), 255)
+    d = ImageDraw.Draw(m)
+    for i in range(POD_VFADE):
+        a = int(255 * i / POD_VFADE)
+        if top > 0:
+            d.line((0, i, pw, i), fill=a)
+        if bot > 0:
+            d.line((0, ph - 1 - i, pw, ph - 1 - i), fill=a)
+    right.paste(pod, (0, top), m)
+    canvas = Image.new("RGB", (cw + pw, ch))
+    canvas.paste(right, (cw, 0))
+    # Khoảng giữa bảng và bục: kéo dãn cột nền ngoài cùng bên trái của bục
+    edge = right.crop((0, 0, 2, ch)).resize((cw, ch), Image.BILINEAR).filter(ImageFilter.GaussianBlur(12))
+    canvas.paste(edge, (0, 0))
+    # Bảng cỡ gốc, mép phải mờ dần vào nền
+    mask = Image.new("L", (cw, ch), 255)
+    ImageDraw.Draw(mask).rectangle((cw - CARD_FADE, 0, cw, ch), fill=0)
+    mask = mask.filter(ImageFilter.GaussianBlur(CARD_FADE / 3))
+    canvas.paste(card, (0, 0), mask)
+    return canvas
 
 
 OUT_NAME = "top.webp"
