@@ -72,24 +72,24 @@ W, H = 1811, 868
 
 # Cột trái: avatar + tên + coin (top 1-2-3)
 LEFT_TOP3 = {
-    1: dict(c=(521, 300), r=77, name_y=413, coin_y=440, wmax=190, name_px=29, coin_px=26),
-    2: dict(c=(335, 332), r=63, name_y=421, coin_y=445, wmax=165, name_px=25, coin_px=22),
-    3: dict(c=(705, 332), r=60, name_y=421, coin_y=445, wmax=165, name_px=25, coin_px=22),
+    1: dict(c=(521, 300), r=86, name_y=412, coin_y=440, wmax=200, name_px=32, coin_px=25),
+    2: dict(c=(335, 332), r=71, name_y=417, coin_y=443, wmax=170, name_px=28, coin_px=22),
+    3: dict(c=(705, 332), r=68, name_y=417, coin_y=443, wmax=170, name_px=28, coin_px=22),
 }
 
 # Cột phải (bục): chỉ thay avatar, giữ nguyên số hạng/nhãn/bục của khung
 RIGHT_AVATARS = {
-    1: dict(c=(1369, 425), r=124),
-    2: dict(c=(1085, 470), r=99),
-    3: dict(c=(1642, 473), r=96),
+    1: dict(c=(1369, 425), r=134),
+    2: dict(c=(1085, 470), r=108),
+    3: dict(c=(1642, 473), r=105),
 }
 
 # Bốn thanh hạng 4-7 ở cột trái
 ROW_TOPS = [469, 552, 637, 723]
 ROW_H = 72
 ROW_AVATAR = dict(x=362, r=30)
-ROW_TEXT_X = 415
-ROW_TEXT_W = 350
+ROW_TEXT_X = 412
+ROW_RIGHT = 767
 
 # Thanh tab
 TAB_BAR = (281, 91, 762, 140)
@@ -216,11 +216,12 @@ def _fit_text(text, base_px, max_w, min_px):
 
 
 def _fit_coin(coin, max_w, base_px, min_px):
-    for txt in (fmt_money(coin), fmt_short(coin)):
+    """Số đầy đủ (giữ cỡ >= 85%), không vừa thì chuyển sang dạng rút gọn (4,5 tỷ)."""
+    for txt, ratio in ((fmt_money(coin), 0.85), (fmt_short(coin), 0.7)):
         px = int(base_px)
-        while px >= min_px:
+        while px >= max(int(min_px), int(base_px * ratio)):
             f = _font(px)
-            if _tw(txt, f, _stroke_for(px)) <= max_w:
+            if _tw(txt, f, 0) <= max_w:
                 return f, txt
             px -= 1
     return _font(int(min_px)), fmt_short(coin)
@@ -267,6 +268,29 @@ def _coin_icon(r):
 # ----------------------------------------------------------------------
 # PAINTER: gom chữ + icon, cuối cùng đổ bóng mềm rồi vẽ chữ sắc nét lên trên
 # ----------------------------------------------------------------------
+def _aa_pill(img, box, fill, outline=None, ow=1.5):
+    """Viên thuốc bo tròn, vẽ supersample 4x cho viền mịn."""
+    k = 4
+    x0, y0 = int(math.floor(box[0])) - 3, int(math.floor(box[1])) - 3
+    x1, y1 = int(math.ceil(box[2])) + 3, int(math.ceil(box[3])) + 3
+    layer = Image.new("RGBA", ((x1 - x0) * k, (y1 - y0) * k), (0, 0, 0, 0))
+    b = ((box[0] - x0) * k, (box[1] - y0) * k, (box[2] - x0) * k, (box[3] - y0) * k)
+    ImageDraw.Draw(layer).rounded_rectangle(
+        b, radius=(b[3] - b[1]) / 2, fill=fill,
+        outline=outline, width=int(ow * k) if outline else 0)
+    img.alpha_composite(layer.resize((x1 - x0, y1 - y0), Image.LANCZOS), (x0, y0))
+
+
+def _coin_layout(coin, max_w, px):
+    r = int(round(px * 0.5))
+    gap = int(round(px * 0.32))
+    padx = int(round(px * 0.55))
+    ph = int(round(px * 1.4))
+    f, txt = _fit_coin(coin, max_w - 2 * padx - 2 * r - gap, px, int(px * 0.7))
+    pw = int(math.ceil(2 * padx + 2 * r + gap + _tw(txt, f, 0)))
+    return f, txt, r, gap, padx, pw, ph
+
+
 class _Painter:
     def __init__(self):
         self.items = []
@@ -276,27 +300,29 @@ class _Painter:
             stroke = _stroke_for(getattr(font, "size", 24))
         self.items.append(("t", xy, s, font, fill, anchor, stroke, shadow))
 
-    def coin_line(self, x, y, coin, max_w, px, center=False):
-        """[icon coin] + số tiền. (x, y) là tâm dòng; center=True thì căn giữa theo x."""
-        r = int(round(px * 0.5))
-        gap = int(round(px * 0.35))
-        f, txt = _fit_coin(coin, max_w - 2 * r - gap, px, int(px * 0.62))
-        st = _stroke_for(getattr(f, "size", px))
-        tw = _tw(txt, f, st)
-        total = 2 * r + gap + tw
-        left = x - total / 2 if center else x
-        self.items.append(("c", int(round(left + r)), int(round(y)), r))
-        self.text((left + 2 * r + gap + st, y), txt, f, fill=GOLD_TXT, anchor="lm", stroke=st)
+    def coin_line(self, x, y, coin, max_w, px, align="center"):
+        """Viên thuốc nền tối viền vàng chứa [icon coin] + số tiền. Trả về chiều rộng viên thuốc."""
+        f, txt, r, gap, padx, pw, ph = _coin_layout(coin, max_w, px)
+        left = {"center": x - pw / 2, "right": x - pw}.get(align, x)
+        self.items.append(("p", (left, y - ph / 2, left + pw, y + ph / 2)))
+        self.items.append(("c", int(round(left + padx + r)), int(round(y)), r))
+        self.text((left + padx + 2 * r + gap, y), txt, f, fill=GOLD_TXT,
+                  anchor="lm", stroke=0, shadow=False)
+        return pw
 
     def flush(self, img):
+        for it in self.items:
+            if it[0] == "p":
+                _aa_pill(img, it[1], (5, 12, 52, 178), (255, 206, 72, 175))
+
         shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
         sd = ImageDraw.Draw(shadow)
         for it in self.items:
             if it[0] == "t" and it[7]:
                 _, (x, y), s, f, _fill, anc, st, _sh = it
-                sd.text((x, y + 3), s, font=f, fill=(3, 8, 40, 190), anchor=anc,
-                        stroke_width=st + 1, stroke_fill=(3, 8, 40, 190))
-        img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(3.2)))
+                sd.text((x, y + 3), s, font=f, fill=(3, 8, 40, 200), anchor=anc,
+                        stroke_width=st + 1, stroke_fill=(3, 8, 40, 200))
+        img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(3.5)))
 
         d = ImageDraw.Draw(img)
         for it in self.items:
@@ -304,7 +330,7 @@ class _Painter:
                 _, cx, cy, r = it
                 icon, pad = _coin_icon(r)
                 img.alpha_composite(icon, (cx - r - pad, cy - r - pad))
-            else:
+            elif it[0] == "t":
                 _, (x, y), s, f, fill, anc, st, _sh = it
                 d.text((x, y), s, font=f, fill=fill, anchor=anc,
                        stroke_width=st, stroke_fill=NAVY_STROKE)
@@ -374,8 +400,6 @@ def _draw_header(img, p, tab):
         cx = TAB_CENTERS[key]
         pill = (cx - TAB_PILL_W / 2, by0 + 4, cx + TAB_PILL_W / 2, by1 - 4)
         rr(pill, (pill[3] - pill[1]) / 2, fill=(255, 190, 28, 255), outline=(255, 224, 108, 255), width=2 * k)
-        hl = (pill[0] + 12, pill[1] + 3, pill[2] - 12, pill[1] + 12)   # vệt sáng phía trên
-        rr(hl, 5, fill=(255, 226, 120, 120))
     layer = layer.resize((x1 - x0, y1 - y0), Image.LANCZOS)
     img.alpha_composite(layer, (x0, y0))
 
@@ -396,9 +420,9 @@ def _draw_left_top3(img, p, rows, avatars):
         cx, cy = cfg["c"]
         _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")))
 
-        f, name = _fit_text(clean_name(row["name"]), cfg["name_px"], cfg["wmax"], 15)
-        p.text((cx, cfg["name_y"]), name, f)
-        p.coin_line(cx, cfg["coin_y"], row["coin"], cfg["wmax"], cfg["coin_px"], center=True)
+        f, name = _fit_text(clean_name(row["name"]), cfg["name_px"], cfg["wmax"], cfg["name_px"] - 6)
+        p.text((cx, cfg["name_y"]), name, f, stroke=2)
+        p.coin_line(cx, cfg["coin_y"], row["coin"], cfg["wmax"], cfg["coin_px"], align="center")
 
 
 def _draw_rows(img, p, rows, avatars):
@@ -410,9 +434,9 @@ def _draw_rows(img, p, rows, avatars):
         cy = top + ROW_H / 2
         _paste_avatar_inside(img, ROW_AVATAR["x"], cy, ROW_AVATAR["r"],
                              avatars.get(row.get("avatar_url")))
-        f, name = _fit_text(clean_name(row["name"]), 28, ROW_TEXT_W, 16)
-        p.text((ROW_TEXT_X, cy - 14), name, f, anchor="lm")
-        p.coin_line(ROW_TEXT_X, cy + 17, row["coin"], ROW_TEXT_W, 24)
+        pw = p.coin_line(ROW_RIGHT, cy, row["coin"], 195, 25, align="right")   # coin ở bên phải
+        f, name = _fit_text(clean_name(row["name"]), 32, ROW_RIGHT - pw - 16 - ROW_TEXT_X, 23)
+        p.text((ROW_TEXT_X, cy), name, f, anchor="lm", stroke=2)               # tên ở giữa-trái
 
 
 def _draw_right_top3(img, rows, avatars):
@@ -425,6 +449,23 @@ def _draw_right_top3(img, rows, avatars):
         _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")))
 
 
+OUT_NAME = "top.webp"
+
+
+def _encode(img):
+    """WebP chất lượng cao (~0,3 MB) để upload nhanh; nếu lỗi thì dùng PNG."""
+    global OUT_NAME
+    buf = io.BytesIO()
+    try:
+        img.save(buf, "WEBP", quality=95, method=5)
+        OUT_NAME = "top.webp"
+    except Exception:
+        buf = io.BytesIO()
+        img.save(buf, "PNG", compress_level=6)
+        OUT_NAME = "top.png"
+    return buf.getvalue()
+
+
 def render_board(rows, tab, avatars):
     """Dùng một khung cho Server/Tuần/Tháng; chỉ đổi tab đang sáng."""
     img = _base().copy()
@@ -434,9 +475,7 @@ def render_board(rows, tab, avatars):
     _draw_rows(img, p, rows, avatars)
     _draw_right_top3(img, rows, avatars)
     p.flush(img)
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, "PNG", compress_level=6)
-    return buf.getvalue()
+    return _encode(img.convert("RGB"))
 
 
 # ----------------------------------------------------------------------
@@ -531,7 +570,7 @@ class TopView(discord.ui.View):
         self.tab = tab
         self._sync()
         await interaction.edit_original_response(
-            attachments=[discord.File(io.BytesIO(png), "top.png")], view=self)
+            attachments=[discord.File(io.BytesIO(png), OUT_NAME)], view=self)
 
     @discord.ui.button(label="Server", emoji="🏠")
     async def b_server(self, interaction, button):
@@ -566,6 +605,8 @@ class TopCog(commands.Cog):
         self.bot = bot
         self._png_cache = {}      # (tab, guild_id) -> (time, bytes)
         self._refreshing = set()
+        self._used = {}           # (tab, guild_id) -> lần gọi gần nhất
+        self._prewarmed = False
 
     async def cog_load(self):
         ensure_activity_table()
@@ -589,6 +630,28 @@ class TopCog(commands.Cog):
                 await self._build((tab, 0), tab, None)
             except Exception as e:
                 print(f"[Top] lỗi dựng sẵn {tab}: {e}")
+        # làm mới ngầm bảng Server của các server vừa có người gọi (trong 30 phút)
+        now = time.time()
+        for (tab, gid), t in list(self._used.items()):
+            guild = self.bot.get_guild(gid) if (tab == "server" and gid) else None
+            if guild is not None and now - t < 1800:
+                try:
+                    await self._build((tab, gid), "server", guild)
+                except Exception as e:
+                    print(f"[Top] lỗi làm mới server {gid}: {e}")
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Bot vừa khởi động: dựng sẵn bảng Server cho các server để lần gọi đầu ra liền."""
+        if self._prewarmed or not self.refresh_loop.is_running():
+            return
+        self._prewarmed = True
+        for guild in list(self.bot.guilds)[:30]:
+            try:
+                await self._build(("server", guild.id), "server", guild)
+                self._used[("server", guild.id)] = time.time()
+            except Exception as e:
+                print(f"[Top] lỗi dựng sẵn server {guild.id}: {e}")
 
     @refresh_loop.before_loop
     async def _before_refresh(self):
@@ -653,6 +716,7 @@ class TopCog(commands.Cog):
         key = (tab, guild.id if (tab == "server" and guild) else 0)
         hit = self._png_cache.get(key)
         now = time.time()
+        self._used[key] = now
         if hit:
             if now - hit[0] > self.FRESH and key not in self._refreshing:
                 self._refreshing.add(key)
@@ -675,7 +739,7 @@ class TopCog(commands.Cog):
             print(f"[Top] lỗi dựng ảnh: {e}")
             return await ctx.send(f"❌ Chưa dựng được bảng xếp hạng: `{e}`", delete_after=10)
         view = TopView(self, ctx.author.id, ctx.guild)
-        view.message = await ctx.send(file=discord.File(io.BytesIO(png), "top.png"), view=view)
+        view.message = await ctx.send(file=discord.File(io.BytesIO(png), OUT_NAME), view=view)
 
 
 async def setup(bot):
@@ -704,5 +768,5 @@ if __name__ == "__main__":
     rows = [{"name": n, "coin": c, "avatar_url": f"u{i}"} for i, (n, c) in enumerate(zip(names, coins))]
     av = {f"u{i}": _fake_avatar(i) for i in range(7)}
     for t in ("server", "week", "month"):
-        Path(f"top_preview_{t}.png").write_bytes(render_board(rows, t, av))
-        print("đã tạo", f"top_preview_{t}.png")
+        Path(f"top_preview_{t}.{OUT_NAME.split('.')[-1]}").write_bytes(render_board(rows, t, av))
+        print("đã tạo", f"top_preview_{t}.{OUT_NAME.split('.')[-1]}")
