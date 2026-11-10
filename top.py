@@ -27,7 +27,7 @@ from pathlib import Path
 import aiohttp
 import discord
 from discord.ext import commands
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from database import DB_NAME
 
@@ -45,9 +45,8 @@ FONT_CANDIDATES = [
 # ----------------------------------------------------------------------
 # HÌNH HỌC KHUNG (toạ độ theo ảnh template gốc 1024x682)
 # ----------------------------------------------------------------------
-S = 3                                   # phóng to 3x cho chữ nét
-CARD_BOX = (172, 64, 457, 618)          # vùng thẻ trong template (bỏ phần nền xung quanh)
-CW, CH = CARD_BOX[2] - CARD_BOX[0], CARD_BOX[3] - CARD_BOX[1]
+S = 2                                   # phóng to 2x (ảnh ra 2048x1364)
+W0, H0 = 1024, 682                      # kích thước ảnh template gốc
 ROW_TOPS = [387, 446, 505, 563]         # đầu thanh hạng 4,5,6,7
 ROW_H = 47
 
@@ -57,6 +56,12 @@ TOP3 = {
     2: dict(c=(234, 270.5), r=32, name_y=338, coin_y=354, wmax=104, ring=(205, 212, 232)),
     3: dict(c=(394.5, 270.5), r=32, name_y=338, coin_y=354, wmax=104, ring=(214, 140, 70)),
 }
+# bên phải (bục podium): tâm avatar, bán kính, vị trí chữ
+RIGHT3 = {
+    1: dict(c=(736, 355), r=49, name_y=430, coin_y=451, wmax=140, ring=(255, 196, 40)),
+    2: dict(c=(603, 385), r=34, name_y=447, coin_y=468, wmax=118, ring=(205, 212, 232)),
+    3: dict(c=(866, 385), r=34, name_y=447, coin_y=468, wmax=118, ring=(214, 140, 70)),
+}
 TABS = [("server", "Server"), ("week", "Tuần"), ("month", "Tháng")]
 TAB_DAYS = {"week": 7, "month": 30}
 
@@ -65,11 +70,11 @@ NAVY_STROKE = (8, 20, 70)
 
 
 def X(x):
-    return int(round((x - CARD_BOX[0]) * S))
+    return int(round(x * S))
 
 
 def Y(y):
-    return int(round((y - CARD_BOX[1]) * S))
+    return int(round(y * S))
 
 
 # ----------------------------------------------------------------------
@@ -204,13 +209,19 @@ def _base():
     for top in ROW_TOPS:
         im.paste(im.crop((330, top + 3, 374, top + 44)), (214, top + 3))
 
-    card = im.crop(CARD_BOX).resize((CW * S, CH * S), Image.LANCZOS).convert("RGBA")
+    # xoá chữ "Leaderboard" to bên phải: kéo giãn dải nền phía trên đè lên
+    # (điền nền rồi làm mịn dần từ mép vào trong, không cần numpy)
+    box = (540, 90, 933, 170)
+    region = im.crop(box)
+    hole = Image.new("L", region.size, 0)
+    ImageDraw.Draw(hole).rectangle((16, 12, region.width - 16, region.height - 12), fill=255)
+    fill = region.crop((16, 2, region.width - 16, 6)).resize((region.width - 32, region.height - 24), Image.BICUBIC)
+    region.paste(fill, (16, 12))
+    for _ in range(70):
+        region = Image.composite(region.filter(ImageFilter.GaussianBlur(5)), region, hole)
+    im.paste(region, box[:2])
 
-    # bo góc, nền ngoài thẻ trong suốt (không còn khung bao quanh)
-    big = Image.new("L", (CW * S * 2, CH * S * 2), 0)
-    ImageDraw.Draw(big).rounded_rectangle((0, 0, CW * S * 2 - 1, CH * S * 2 - 1), radius=20 * S * 2, fill=255)
-    card.putalpha(big.resize((CW * S, CH * S), Image.LANCZOS))
-    return card
+    return im.resize((W0 * S, H0 * S), Image.LANCZOS).convert("RGBA")
 
 
 # ----------------------------------------------------------------------
@@ -239,20 +250,20 @@ def _draw_header(d, tab):
         d.text((X(cx), Y(cy)), label, font=_font(int(10.5 * S)), fill=color, anchor="mm")
 
 
-def _draw_top3(img, d, rows, avatars):
-    for rank, cfg in TOP3.items():
+def _draw_top3(img, d, rows, avatars, cfgs, k=1.0):
+    for rank, cfg in cfgs.items():
         if rank > len(rows):
             continue
         r = rows[rank - 1]
         cx, cy = cfg["c"]
-        _paste_avatar(img, cx, cy, cfg["r"], avatars.get(r.get("avatar_url")), ring=cfg["ring"], ring_w=2.2)
+        _paste_avatar(img, cx, cy, cfg["r"], avatars.get(r.get("avatar_url")), ring=cfg["ring"], ring_w=2.2 * k)
 
-        f, name = _fit_text(d, clean_name(r["name"]), 13 * S if rank == 1 else 11.5 * S,
+        f, name = _fit_text(d, clean_name(r["name"]), (13 if rank == 1 else 11.5) * k * S,
                             cfg["wmax"] * S, 7 * S)
         d.text((X(cx), Y(cfg["name_y"])), name, font=f, fill="white", anchor="mm",
                stroke_width=2, stroke_fill=NAVY_STROKE)
         _draw_coin_line(d, X(cx), Y(cfg["coin_y"]), r["coin"], cfg["wmax"] * S,
-                        int((11 if rank == 1 else 10) * S), center=True)
+                        int((11 if rank == 1 else 10) * k * S), center=True)
 
 
 def _draw_rows(img, d, rows, avatars):
@@ -272,13 +283,23 @@ def _draw_rows(img, d, rows, avatars):
         _draw_coin_line(d, X(263), Y(top + 33), r["coin"], (440 - 263) * S, int(11 * S))
 
 
+def _draw_right_title(d):
+    text = "BẢNG XẾP HẠNG"
+    f, t = _fit_text(d, text, 40 * S, 340 * S, 20 * S)
+    cx, cy = X(736), Y(128)
+    d.text((cx + 3 * S, cy + 4 * S), t, font=f, fill=(70, 20, 140), anchor="mm")
+    d.text((cx, cy), t, font=f, fill=(255, 186, 48), anchor="mm", stroke_width=S, stroke_fill=(226, 128, 18))
+
+
 def render_board(rows, tab, avatars):
     """rows: [{"name","coin","avatar_url"}...] (tối đa 7) ; avatars: {url: bytes}. Trả về bytes PNG."""
     img = _base().copy()
     d = ImageDraw.Draw(img)
     _draw_header(d, tab)
-    _draw_top3(img, d, rows, avatars)
+    _draw_top3(img, d, rows, avatars, TOP3)
     _draw_rows(img, d, rows, avatars)
+    _draw_right_title(d)
+    _draw_top3(img, d, rows, avatars, RIGHT3, k=1.18)
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return buf.getvalue()
