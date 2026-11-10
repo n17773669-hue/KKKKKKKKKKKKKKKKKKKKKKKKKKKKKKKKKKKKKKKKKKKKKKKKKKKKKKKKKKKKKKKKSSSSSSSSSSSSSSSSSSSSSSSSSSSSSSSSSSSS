@@ -33,7 +33,16 @@ from database import DB_NAME
 
 BASE_DIR = Path(__file__).resolve().parent
 ASSETS = BASE_DIR / "assets"
-TEMPLATE_PATH = ASSETS / "leaderboard_template.png"
+TEMPLATE_NAME = "leaderboard_template.png"
+TEMPLATE_CANDIDATES = [ASSETS / TEMPLATE_NAME, BASE_DIR / TEMPLATE_NAME]
+
+
+def template_path():
+    for p in TEMPLATE_CANDIDATES:
+        if p.exists():
+            return p
+    raise FileNotFoundError(
+        f"Thiếu ảnh khung: hãy upload '{TEMPLATE_NAME}' vào thư mục 'assets' (hoặc cạnh top.py)")
 FONT_CANDIDATES = [
     str(ASSETS / "BeVietnamPro-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -198,7 +207,7 @@ def _paste_avatar(img, cx, cy, r, data, ring=None, ring_w=2.0):
 # ----------------------------------------------------------------------
 @lru_cache(maxsize=1)
 def _base():
-    im = Image.open(TEMPLATE_PATH).convert("RGB")
+    im = Image.open(template_path()).convert("RGB")
 
     # xoá chữ "LEADERBOARD": kéo giãn 1 dải gradient mỏng ở phía trên đè lên
     x0, x1, y0, y1 = 236, 392, 82, 104
@@ -386,7 +395,11 @@ class TopView(discord.ui.View):
 
     async def _switch(self, interaction, tab):
         await interaction.response.defer()
-        png = await self.cog.make_png(tab, self.guild)
+        try:
+            png = await self.cog.make_png(tab, self.guild)
+        except Exception as e:
+            print(f"[Top] lỗi dựng ảnh: {e}")
+            return await interaction.followup.send(f"❌ Chưa dựng được bảng: `{e}`", ephemeral=True)
         self.tab = tab
         self._sync()
         await interaction.edit_original_response(
@@ -428,11 +441,17 @@ class TopCog(commands.Cog):
 
     async def cog_load(self):
         ensure_activity_table()
-        await asyncio.to_thread(_base)          # dựng sẵn nền 1 lần lúc khởi động
+        try:
+            await asyncio.to_thread(_base)      # dựng sẵn nền 1 lần lúc khởi động
+        except Exception as e:
+            # thiếu ảnh/lỗi ảnh thì KHÔNG làm sập bot, chỉ báo log
+            print(f"[Top] ⚠️ Chưa dựng được bảng xếp hạng ảnh: {e}")
+            return
         self.refresh_loop.start()
 
     async def cog_unload(self):
-        self.refresh_loop.cancel()
+        if self.refresh_loop.is_running():
+            self.refresh_loop.cancel()
 
     @tasks.loop(seconds=60)
     async def refresh_loop(self):
@@ -518,11 +537,15 @@ class TopCog(commands.Cog):
     async def cmd_top(self, ctx):
         """Xem bảng xếp hạng đại gia."""
         key = ("server", ctx.guild.id if ctx.guild else 0)
-        if key in self._png_cache:
-            png = await self.make_png("server", ctx.guild)
-        else:
-            async with ctx.typing():
+        try:
+            if key in self._png_cache:
                 png = await self.make_png("server", ctx.guild)
+            else:
+                async with ctx.typing():
+                    png = await self.make_png("server", ctx.guild)
+        except Exception as e:
+            print(f"[Top] lỗi dựng ảnh: {e}")
+            return await ctx.send(f"❌ Chưa dựng được bảng xếp hạng: `{e}`", delete_after=10)
         view = TopView(self, ctx.author.id, ctx.guild)
         view.message = await ctx.send(file=discord.File(io.BytesIO(png), "top.jpg"), view=view)
 
