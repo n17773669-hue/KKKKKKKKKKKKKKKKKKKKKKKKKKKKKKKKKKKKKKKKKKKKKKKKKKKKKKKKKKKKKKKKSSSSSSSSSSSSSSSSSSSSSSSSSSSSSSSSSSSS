@@ -235,21 +235,6 @@ async def cmd_daily(ctx):
     await ctx.send(f"🎁 Nhận lương thành công **+1,500** {COIN_EMOJI}!")
 
 
-@bot.hybrid_command(name='top')
-async def cmd_top(ctx):
-    """Xem bảng xếp hạng đại gia."""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_id, coin, streak FROM users ORDER BY coin DESC LIMIT 10')
-    rows = cursor.fetchall()
-    conn.close()
-    desc = ""
-    for idx, (u, c, s) in enumerate(rows, 1):
-        desc += f"`Top {idx}` <@!{u}>: `{c:,}` {COIN_EMOJI} | Streak: **{s}🔥**\n"
-    embed = discord.Embed(title="🏆 BẢNG PHONG THẦN ĐẠI GIA", description=desc, color=MAIN_COLOR)
-    await ctx.send(embed=embed)
-
-
 # ================================================================
 # 🛡️ QUẢN TRỊ — GAG / UNMUTE / MUTE / KICK / BAN / UNBAN
 # ================================================================
