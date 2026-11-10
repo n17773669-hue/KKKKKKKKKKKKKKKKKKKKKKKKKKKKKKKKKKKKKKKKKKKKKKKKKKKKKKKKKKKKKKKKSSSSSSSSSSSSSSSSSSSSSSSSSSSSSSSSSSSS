@@ -46,6 +46,9 @@ def template_path():
 FONT_CANDIDATES = [
     str(ASSETS / "BeVietnamPro-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
     "DejaVuSans-Bold.ttf",
     "arialbd.ttf",
     "Arial Bold.ttf",
@@ -96,7 +99,7 @@ def Y(y):
 # ----------------------------------------------------------------------
 # TIỆN ÍCH CHỮ / SỐ
 # ----------------------------------------------------------------------
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=128)
 def _font(px):
     for path in FONT_CANDIDATES:
         try:
@@ -106,11 +109,41 @@ def _font(px):
     return ImageFont.load_default(px)
 
 
+@lru_cache(maxsize=512)
+def _font_for_text(text, px):
+    """Chọn font có độ phủ ký tự tốt nhất để hạn chế ô vuông/ký tự bị mất."""
+    best_font = _font(px)
+    best_score = -1
+    for path in FONT_CANDIDATES:
+        try:
+            candidate = ImageFont.truetype(path, px)
+            missing = candidate.getmask("\ufffd")
+            score = 0
+            for ch in text:
+                if ch.isspace() or ord(ch) < 32 or ch in "\ufe0e\ufe0f\u200d":
+                    continue
+                try:
+                    glyph = candidate.getmask(ch)
+                    # Font thiếu glyph thường trả về cùng mặt nạ với ký tự thay thế.
+                    if glyph.size != missing.size or bytes(glyph) != bytes(missing):
+                        score += 1
+                except Exception:
+                    pass
+            if score > best_score:
+                best_score, best_font = score, candidate
+        except Exception:
+            continue
+    return best_font
+
+
 _EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]")
 
 
 def clean_name(name):
-    name = _EMOJI_RE.sub("", name or "")
+    # Giữ nguyên emoji, ký tự đặc biệt, chữ Nhật/Hàn/Trung...
+    # Chỉ bỏ ký tự điều khiển có thể làm hỏng bố cục.
+    name = str(name or "")
+    name = "".join(ch for ch in name if ch in "\t " or ord(ch) >= 32)
     name = " ".join(name.split())
     return name or "Người chơi"
 
@@ -129,15 +162,19 @@ def fmt_short(n):
 
 
 def _fit_text(d, text, base_px, max_w, min_px):
-    """Thu nhỏ chữ cho vừa; vẫn dài quá thì cắt bằng '…'."""
+    """Thu nhỏ chữ cho vừa; giữ nguyên ký tự đặc biệt, chỉ rút gọn khi quá dài."""
     px = int(base_px)
-    while px > min_px and d.textlength(text, font=_font(px)) > max_w:
+    while px > min_px:
+        f = _font_for_text(text, px)
+        if d.textlength(text, font=f) <= max_w:
+            break
         px -= 1
-    f = _font(px)
+    f = _font_for_text(text, px)
     while len(text) > 1 and d.textlength(text, font=f) > max_w:
         text = text[:-1].rstrip()
-        if d.textlength(text + "…", font=f) <= max_w:
-            text += "…"
+        candidate = text + "…"
+        if d.textlength(candidate, font=f) <= max_w:
+            text = candidate
             break
     return f, text
 
@@ -293,14 +330,14 @@ def _draw_left_top3(img, d, rows, avatars):
         _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")))
 
         name_font, name = _fit_text(
-            d, clean_name(row["name"]), 12 * S, cfg["wmax"] * S, 8 * S
+            d, clean_name(row["name"]), 14 * S, cfg["wmax"] * S, 9 * S
         )
         d.text((X(cx), Y(cfg["name_y"])), name, font=name_font,
                fill=(255, 255, 255), anchor="mm",
                stroke_width=2 * S, stroke_fill=NAVY_STROKE)
         _draw_coin_line(
             d, X(cx), Y(cfg["coin_y"]), row["coin"], cfg["wmax"] * S,
-            12 * S, center=True
+            13 * S, center=True
         )
 
 
@@ -317,13 +354,13 @@ def _draw_rows(img, d, rows, avatars):
                             avatars.get(avatar_url))
 
         name_font, name = _fit_text(
-            d, clean_name(row["name"]), 11 * S, 160 * S, 8 * S
+            d, clean_name(row["name"]), 13 * S, 160 * S, 9 * S
         )
         d.text((X(243), Y(top + 13)), name, font=name_font,
                fill=(255, 255, 255), anchor="lm",
                stroke_width=2 * S, stroke_fill=NAVY_STROKE)
         _draw_coin_line(d, X(243), Y(top + 31), row["coin"],
-                        160 * S, 10 * S)
+                        160 * S, 12 * S)
 
 
 def _draw_right_top3(img, rows, avatars):
