@@ -34,10 +34,7 @@ from database import DB_NAME
 BASE_DIR = Path(__file__).resolve().parent
 ASSETS = BASE_DIR / "assets"
 TEMPLATE_NAME = "top.png"
-TEMPLATE_CANDIDATES = [
-    ASSETS / "top.png",
-    BASE_DIR / "top.png"
-]
+TEMPLATE_CANDIDATES = [ASSETS / TEMPLATE_NAME, BASE_DIR / TEMPLATE_NAME]
 
 
 def template_path():
