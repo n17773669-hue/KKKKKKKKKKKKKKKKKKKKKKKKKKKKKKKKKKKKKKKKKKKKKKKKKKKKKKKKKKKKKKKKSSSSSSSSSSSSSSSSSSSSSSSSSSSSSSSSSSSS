@@ -72,9 +72,9 @@ W, H = 1811, 868
 
 # Cột trái: avatar + tên + coin (top 1-2-3)
 LEFT_TOP3 = {
-    1: dict(c=(521, 300), r=86, name_y=412, coin_y=440, wmax=200, name_px=32, coin_px=25),
-    2: dict(c=(335, 332), r=71, name_y=417, coin_y=443, wmax=170, name_px=28, coin_px=22),
-    3: dict(c=(705, 332), r=68, name_y=417, coin_y=443, wmax=170, name_px=28, coin_px=22),
+    1: dict(c=(521, 300), r=86, name_y=411, coin_y=441, wmax=200, name_px=34, coin_px=24),
+    2: dict(c=(335, 332), r=71, name_y=419, coin_y=445, wmax=172, name_px=27, coin_px=21),
+    3: dict(c=(705, 332), r=68, name_y=419, coin_y=445, wmax=172, name_px=27, coin_px=21),
 }
 
 # Cột phải (bục): chỉ thay avatar, giữ nguyên số hạng/nhãn/bục của khung
@@ -97,6 +97,10 @@ TAB_CENTERS = {"server": 358, "week": 517, "month": 679}
 TAB_PILL_W = 148
 TABS = [("server", "Server"), ("week", "Tuần"), ("month", "Tháng")]
 TAB_DAYS = {"week": 7, "month": 30}
+
+OUT_W = 1100          # chiều rộng ảnh gửi đi (vẽ ở 1811 rồi thu nhỏ bằng LANCZOS -> chữ nét; 0 = giữ nguyên)
+RIM_W = 3             # độ dày viền mảnh ở mép avatar (0 = tắt)
+RIM = {1: (255, 205, 70), 2: (200, 218, 255), 3: (242, 156, 98)}   # vàng / bạc / đồng
 
 GOLD_TXT = (255, 221, 104)
 NAVY_STROKE = (8, 20, 70)
@@ -216,8 +220,8 @@ def _fit_text(text, base_px, max_w, min_px):
 
 
 def _fit_coin(coin, max_w, base_px, min_px):
-    """Số đầy đủ (giữ cỡ >= 85%), không vừa thì chuyển sang dạng rút gọn (4,5 tỷ)."""
-    for txt, ratio in ((fmt_money(coin), 0.85), (fmt_short(coin), 0.7)):
+    """Số đầy đủ (giữ cỡ >= 95%), không vừa thì chuyển sang dạng rút gọn (4,5 tỷ)."""
+    for txt, ratio in ((fmt_money(coin), 0.95), (fmt_short(coin), 0.7)):
         px = int(base_px)
         while px >= max(int(min_px), int(base_px * ratio)):
             f = _font(px)
@@ -356,7 +360,18 @@ def _load_avatar(data, d):
         return None
 
 
-def _paste_avatar_inside(img, cx, cy, r, data):
+def _aa_ring(img, cx, cy, r, color, w):
+    k, pad = 6, 3
+    size = 2 * (r + pad)
+    layer = Image.new("RGBA", (size * k, size * k), (0, 0, 0, 0))
+    c, R = size * k / 2, r * k
+    ImageDraw.Draw(layer).ellipse((c - R, c - R, c + R, c + R),
+                                  outline=tuple(color) + (255,), width=int(w * k))
+    img.alpha_composite(layer.resize((size, size), Image.LANCZOS),
+                        (int(cx) - r - pad, int(cy) - r - pad))
+
+
+def _paste_avatar_inside(img, cx, cy, r, data, rim=None):
     """Đặt avatar trong vòng tròn có sẵn của khung (giữ nguyên viền/ánh sáng của khung)."""
     if not data:
         return          # không có avatar -> giữ nguyên avatar mẫu của khung
@@ -365,6 +380,8 @@ def _paste_avatar_inside(img, cx, cy, r, data):
     if av is None:
         return
     img.paste(av, (int(cx) - d // 2, int(cy) - d // 2), _circle_mask(d))
+    if rim and RIM_W:
+        _aa_ring(img, cx, cy, int(r), rim, RIM_W)
 
 
 # ----------------------------------------------------------------------
@@ -418,10 +435,10 @@ def _draw_left_top3(img, p, rows, avatars):
             continue
         row = rows[rank - 1]
         cx, cy = cfg["c"]
-        _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")))
+        _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")), RIM[rank])
 
         f, name = _fit_text(clean_name(row["name"]), cfg["name_px"], cfg["wmax"], cfg["name_px"] - 6)
-        p.text((cx, cfg["name_y"]), name, f, stroke=2)
+        p.text((cx, cfg["name_y"]), name, f, stroke=0)
         p.coin_line(cx, cfg["coin_y"], row["coin"], cfg["wmax"], cfg["coin_px"], align="center")
 
 
@@ -434,9 +451,9 @@ def _draw_rows(img, p, rows, avatars):
         cy = top + ROW_H / 2
         _paste_avatar_inside(img, ROW_AVATAR["x"], cy, ROW_AVATAR["r"],
                              avatars.get(row.get("avatar_url")))
-        pw = p.coin_line(ROW_RIGHT, cy, row["coin"], 195, 25, align="right")   # coin ở bên phải
-        f, name = _fit_text(clean_name(row["name"]), 32, ROW_RIGHT - pw - 16 - ROW_TEXT_X, 23)
-        p.text((ROW_TEXT_X, cy), name, f, anchor="lm", stroke=2)               # tên ở giữa-trái
+        pw = p.coin_line(ROW_RIGHT, cy, row["coin"], 200, 26, align="right")   # coin ở bên phải
+        f, name = _fit_text(clean_name(row["name"]), 35, ROW_RIGHT - pw - 16 - ROW_TEXT_X, 24)
+        p.text((ROW_TEXT_X, cy), name, f, anchor="lm", stroke=0)               # tên ở giữa-trái
 
 
 def _draw_right_top3(img, rows, avatars):
@@ -446,7 +463,7 @@ def _draw_right_top3(img, rows, avatars):
             continue
         row = rows[rank - 1]
         cx, cy = cfg["c"]
-        _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")))
+        _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")), RIM[rank])
 
 
 OUT_NAME = "top.webp"
@@ -475,7 +492,12 @@ def render_board(rows, tab, avatars):
     _draw_rows(img, p, rows, avatars)
     _draw_right_top3(img, rows, avatars)
     p.flush(img)
-    return _encode(img.convert("RGB"))
+    out = img.convert("RGB")
+    if OUT_W and OUT_W < out.width:
+        h = int(round(out.height * OUT_W / out.width))
+        out = out.resize((OUT_W, h), Image.LANCZOS).filter(
+            ImageFilter.UnsharpMask(radius=0.9, percent=45, threshold=2))
+    return _encode(out)
 
 
 # ----------------------------------------------------------------------
