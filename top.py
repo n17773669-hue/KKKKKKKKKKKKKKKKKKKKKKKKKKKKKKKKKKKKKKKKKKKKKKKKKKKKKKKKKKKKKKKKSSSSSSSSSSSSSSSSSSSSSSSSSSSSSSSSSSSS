@@ -116,41 +116,51 @@ def _tw(text, font, stroke=0):
     return _MEASURE.textlength(text, font=font) + 2 * stroke
 
 
+@lru_cache(maxsize=256)
+def _truetype(path, px):
+    return ImageFont.truetype(path, px)
+
+
 @lru_cache(maxsize=128)
 def _font(px):
     for path in FONT_CANDIDATES:
         try:
-            return ImageFont.truetype(path, px)
+            return _truetype(path, px)
         except Exception:
             continue
     return ImageFont.load_default(px)
 
 
 @lru_cache(maxsize=512)
-def _font_for_text(text, px):
-    """Chọn font có độ phủ ký tự tốt nhất để hạn chế ô vuông/ký tự bị mất."""
-    best_font = _font(px)
-    best_score = -1
+def _best_path(text):
+    """File font phủ nhiều ký tự của `text` nhất (tính 1 lần cho mỗi tên)."""
+    best, best_score = None, -1
     for path in FONT_CANDIDATES:
         try:
-            candidate = ImageFont.truetype(path, px)
-            missing = candidate.getmask("\U0010fffe")
+            f = _truetype(path, 24)
+            missing = f.getmask("\U0010fffe")
             score = 0
             for ch in text:
                 if ch.isspace() or ord(ch) < 32 or ch in "\ufe0e\ufe0f\u200d":
                     continue
-                try:
-                    glyph = candidate.getmask(ch)
-                    # Font thiếu glyph thường trả về cùng mặt nạ với ký tự thay thế.
-                    if glyph.size != missing.size or bytes(glyph) != bytes(missing):
-                        score += 1
-                except Exception:
-                    pass
+                g = f.getmask(ch)
+                if g.size != missing.size or bytes(g) != bytes(missing):
+                    score += 1
             if score > best_score:
-                best_score, best_font = score, candidate
+                best, best_score = path, score
         except Exception:
             continue
-    return best_font
+    return best
+
+
+def _font_for_text(text, px):
+    path = _best_path(text)
+    if path:
+        try:
+            return _truetype(path, int(px))
+        except Exception:
+            pass
+    return _font(px)
 
 
 def clean_name(name):
@@ -319,14 +329,25 @@ class _Painter:
             if it[0] == "p":
                 _aa_pill(img, it[1], (5, 12, 52, 178), (255, 206, 72, 175))
 
-        shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        sd = ImageDraw.Draw(shadow)
+        boxes = []
         for it in self.items:
             if it[0] == "t" and it[7]:
-                _, (x, y), s, f, _fill, anc, st, _sh = it
-                sd.text((x, y + 3), s, font=f, fill=(3, 8, 40, 200), anchor=anc,
-                        stroke_width=st + 1, stroke_fill=(3, 8, 40, 200))
-        img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(3.5)))
+                _, (x, y), t, f, _fill, anc, st, _sh = it
+                boxes.append(_MEASURE.textbbox((x, y + 3), t, font=f, anchor=anc, stroke_width=st + 1))
+        if boxes:
+            pad = 16
+            x0 = max(0, int(min(b[0] for b in boxes)) - pad)
+            y0 = max(0, int(min(b[1] for b in boxes)) - pad)
+            x1 = min(img.width, int(max(b[2] for b in boxes)) + pad)
+            y1 = min(img.height, int(max(b[3] for b in boxes)) + pad)
+            shadow = Image.new("RGBA", (x1 - x0, y1 - y0), (0, 0, 0, 0))
+            sd = ImageDraw.Draw(shadow)
+            for it in self.items:
+                if it[0] == "t" and it[7]:
+                    _, (x, y), t, f, _fill, anc, st, _sh = it
+                    sd.text((x - x0, y + 3 - y0), t, font=f, fill=(3, 8, 40, 200), anchor=anc,
+                            stroke_width=st + 1, stroke_fill=(3, 8, 40, 200))
+            img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(3.5)), (x0, y0))
 
         d = ImageDraw.Draw(img)
         for it in self.items:
@@ -351,13 +372,27 @@ def _circle_mask(d):
     return big.resize((d, d), Image.LANCZOS)
 
 
+_av_proc = {}
+
+
 def _load_avatar(data, d):
+    key = (hash(data), d)
+    hit = _av_proc.get(key)
+    if hit is not None:
+        return hit
     try:
         im = Image.open(io.BytesIO(data)).convert("RGBA")
         im = ImageOps.fit(im, (d, d), Image.LANCZOS)
-        return im.filter(ImageFilter.UnsharpMask(radius=1.1, percent=55, threshold=2))
+        im = im.filter(ImageFilter.UnsharpMask(radius=1.1, percent=55, threshold=2))
     except Exception:
         return None
+    try:
+        if len(_av_proc) >= 30:
+            _av_proc.pop(next(iter(_av_proc)))
+    except Exception:
+        _av_proc.clear()
+    _av_proc[key] = im
+    return im
 
 
 def _aa_ring(img, cx, cy, r, color, w):
@@ -474,7 +509,7 @@ def _encode(img):
     global OUT_NAME
     buf = io.BytesIO()
     try:
-        img.save(buf, "WEBP", quality=95, method=5)
+        img.save(buf, "WEBP", quality=94, method=3)
         OUT_NAME = "top.webp"
     except Exception:
         buf = io.BytesIO()
@@ -483,11 +518,19 @@ def _encode(img):
     return buf.getvalue()
 
 
-def render_board(rows, tab, avatars):
-    """Dùng một khung cho Server/Tuần/Tháng; chỉ đổi tab đang sáng."""
+def _tab_base(tab):
+    """Khung + thanh tab (vẽ mới mỗi lần, rẻ; không giữ cache để đỡ tốn RAM)."""
     img = _base().copy()
     p = _Painter()
     _draw_header(img, p, tab)
+    p.flush(img)
+    return img
+
+
+def render_board(rows, tab, avatars):
+    """Dùng một khung cho Server/Tuần/Tháng; chỉ đổi tab đang sáng."""
+    img = _tab_base(tab)
+    p = _Painter()
     _draw_left_top3(img, p, rows, avatars)
     _draw_rows(img, p, rows, avatars)
     _draw_right_top3(img, rows, avatars)
@@ -518,7 +561,7 @@ def touch_activity(user_id):
 
 def query_all_by_coin():
     with closing(sqlite3.connect(DB_NAME)) as c:
-        return c.execute("SELECT user_id, coin FROM users ORDER BY coin DESC").fetchall()
+        return c.execute("SELECT user_id, coin FROM users ORDER BY coin DESC LIMIT 500").fetchall()
 
 
 def query_active_by_coin(days, limit):
@@ -620,8 +663,8 @@ class TopView(discord.ui.View):
 # COG
 # ----------------------------------------------------------------------
 class TopCog(commands.Cog):
-    FRESH = 45        # giây: quá thời gian này thì dựng lại ngầm
-    MAX_STALE = 600   # giây: cũ hơn nữa thì buộc phải chờ dựng mới
+    FRESH = 120       # giây: mỗi bảng tối đa 1 lần vẽ lại / 2 phút (chỉ khi có người gọi)
+    MAX_STALE = 900   # giây: cũ hơn nữa thì buộc phải chờ dựng mới
 
     def __init__(self, bot):
         self.bot = bot
@@ -629,6 +672,8 @@ class TopCog(commands.Cog):
         self._refreshing = set()
         self._used = {}           # (tab, guild_id) -> lần gọi gần nhất
         self._prewarmed = False
+        self._ok = False
+        self._render_sem = asyncio.Semaphore(1)   # mỗi lúc chỉ vẽ 1 ảnh, không dồn CPU
 
     async def cog_load(self):
         ensure_activity_table()
@@ -638,46 +683,24 @@ class TopCog(commands.Cog):
             # thiếu ảnh/lỗi ảnh thì KHÔNG làm sập bot, chỉ báo log
             print(f"[Top] ⚠️ Chưa dựng được bảng xếp hạng ảnh: {e}")
             return
-        self.refresh_loop.start()
+        self._ok = True
 
     async def cog_unload(self):
-        if self.refresh_loop.is_running():
-            self.refresh_loop.cancel()
-
-    @tasks.loop(seconds=60)
-    async def refresh_loop(self):
-        """Dựng sẵn ảnh Tuần/Tháng (dùng chung mọi server) để bấm là ra liền."""
-        for tab in ("week", "month"):
-            try:
-                await self._build((tab, 0), tab, None)
-            except Exception as e:
-                print(f"[Top] lỗi dựng sẵn {tab}: {e}")
-        # làm mới ngầm bảng Server của các server vừa có người gọi (trong 30 phút)
-        now = time.time()
-        for (tab, gid), t in list(self._used.items()):
-            guild = self.bot.get_guild(gid) if (tab == "server" and gid) else None
-            if guild is not None and now - t < 1800:
-                try:
-                    await self._build((tab, gid), "server", guild)
-                except Exception as e:
-                    print(f"[Top] lỗi làm mới server {gid}: {e}")
+        self._ok = False
 
     @commands.Cog.listener()
     async def on_ready(self):
-        """Bot vừa khởi động: dựng sẵn bảng Server cho các server để lần gọi đầu ra liền."""
-        if self._prewarmed or not self.refresh_loop.is_running():
+        """Khởi động: dựng sẵn bảng Server cho tối đa 3 server đầu (giãn cách, chỉ 1 lần)."""
+        if self._prewarmed or not self._ok:
             return
         self._prewarmed = True
-        for guild in list(self.bot.guilds)[:30]:
+        for guild in list(self.bot.guilds)[:3]:
             try:
                 await self._build(("server", guild.id), "server", guild)
                 self._used[("server", guild.id)] = time.time()
             except Exception as e:
                 print(f"[Top] lỗi dựng sẵn server {guild.id}: {e}")
-
-    @refresh_loop.before_loop
-    async def _before_refresh(self):
-        await self.bot.wait_until_ready()
+            await asyncio.sleep(3)
 
     @commands.Cog.listener()
     async def on_command_completion(self, ctx):
@@ -721,9 +744,18 @@ class TopCog(commands.Cog):
 
     async def _build(self, key, tab, guild):
         rows = await self._get_rows(tab, guild)
+        sig = tuple((r["name"], r["coin"], r["avatar_url"]) for r in rows)
+        hit = self._png_cache.get(key)
+        if hit and len(hit) > 2 and hit[2] == sig:
+            self._png_cache[key] = (time.time(), hit[1], sig)   # dữ liệu y nguyên -> khỏi vẽ lại
+            return hit[1]
         avatars = await fetch_avatars([r["avatar_url"] for r in rows])
-        png = await asyncio.to_thread(render_board, rows, tab, avatars)
-        self._png_cache[key] = (time.time(), png)
+        async with self._render_sem:
+            png = await asyncio.to_thread(render_board, rows, tab, avatars)
+        self._png_cache[key] = (time.time(), png, sig)
+        if len(self._png_cache) > 40:           # giữ cache gọn
+            oldest = min(self._png_cache, key=lambda k: self._png_cache[k][0])
+            self._png_cache.pop(oldest, None)
         return png
 
     async def _refresh(self, key, tab, guild):
