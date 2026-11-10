@@ -1,8 +1,8 @@
 """
-top.py - Bảng xếp hạng đại gia dạng ẢNH (vẽ trực tiếp lên khung leaderboard_template.png)
+top.py - Bảng xếp hạng đại gia dạng ẢNH (vẽ trực tiếp lên khung assets/top.png)
 
 Cần có trong thư mục assets/ (cạnh file này):
-    leaderboard_template.png   <- ảnh khung bạn làm
+    top.png                    <- ảnh khung 1811x868 (đúng bản bạn gửi)
     BeVietnamPro-Bold.ttf      <- font tiếng Việt (không có thì tự dùng DejaVu/Arial)
 
 Cần: pip install pillow aiohttp
@@ -14,10 +14,18 @@ Cần: pip install pillow aiohttp
 
 Lưu ý: "đã dùng bot" được ghi từ lúc file này chạy (bảng top_activity trong DB),
 nên Tuần/Tháng sẽ đầy dần theo thời gian.
+
+Chống mờ:
+  * Vẽ trực tiếp ở độ phân giải GỐC của khung (1811x868), không thu nhỏ rồi phóng to.
+  * Hình tròn / icon coin / thanh tab được vẽ supersample 4-6x rồi thu nhỏ -> viền mịn.
+  * Avatar tải size 512 rồi thu nhỏ bằng LANCZOS + làm nét nhẹ.
+  * Chữ vẽ trực tiếp ở kích thước thật, có viền + bóng mờ để nổi trên nền.
+
+Xem thử nhanh không cần Discord:  python top.py   -> tạo top_preview_*.png
 """
 import asyncio
 import io
-import re
+import math
 import sqlite3
 import time
 from contextlib import closing
@@ -43,6 +51,8 @@ def template_path():
             return p
     raise FileNotFoundError(
         f"Thiếu ảnh khung: hãy upload '{TEMPLATE_NAME}' vào thư mục 'assets' (hoặc cạnh top.py)")
+
+
 FONT_CANDIDATES = [
     str(ASSETS / "BeVietnamPro-Bold.ttf"),
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -55,50 +65,53 @@ FONT_CANDIDATES = [
 ]
 
 # ----------------------------------------------------------------------
-# HÌNH HỌC KHUNG (tọa độ quy đổi theo template 1811x868 -> 1024x491)
+# HÌNH HỌC KHUNG - toạ độ THẬT trên ảnh khung 1811x868 (không quy đổi nữa)
+# Nếu thấy lệch vài px thì chỉnh ở đây (c = tâm, r = bán kính avatar).
 # ----------------------------------------------------------------------
-S = 2
-W0, H0 = 1024, 491
+W, H = 1811, 868
+
+# Cột trái: avatar + tên + coin (top 1-2-3)
+LEFT_TOP3 = {
+    1: dict(c=(521, 300), r=77, name_y=413, coin_y=440, wmax=190, name_px=29, coin_px=26),
+    2: dict(c=(335, 332), r=63, name_y=421, coin_y=445, wmax=165, name_px=25, coin_px=22),
+    3: dict(c=(705, 332), r=60, name_y=421, coin_y=445, wmax=165, name_px=25, coin_px=22),
+}
+
+# Cột phải (bục): chỉ thay avatar, giữ nguyên số hạng/nhãn/bục của khung
+RIGHT_AVATARS = {
+    1: dict(c=(1369, 425), r=124),
+    2: dict(c=(1085, 470), r=99),
+    3: dict(c=(1642, 473), r=96),
+}
 
 # Bốn thanh hạng 4-7 ở cột trái
-ROW_TOPS = [262, 308, 355, 404]
-ROW_H = 41
+ROW_TOPS = [469, 552, 637, 723]
+ROW_H = 72
+ROW_AVATAR = dict(x=362, r=30)
+ROW_TEXT_X = 415
+ROW_TEXT_W = 350
 
-# Cột trái: avatar + tên + coin
-LEFT_TOP3 = {
-    1: dict(c=(292, 166), r=41, name_y=232, coin_y=249, wmax=112),
-    2: dict(c=(187, 185), r=33, name_y=234, coin_y=249, wmax=91),
-    3: dict(c=(394, 185), r=33, name_y=234, coin_y=249, wmax=91),
-}
-
-# Cột phải: chỉ avatar, không vẽ tên/coin
-RIGHT_AVATARS = {
-    1: dict(c=(766, 238), r=67),
-    2: dict(c=(608, 262), r=53),
-    3: dict(c=(919, 265), r=53),
-}
-
-# Avatar nhỏ ở các thanh 4-7
-ROW_AVATAR = dict(x=203, r=15)
-
+# Thanh tab
+TAB_BAR = (281, 91, 762, 140)
+TAB_CENTERS = {"server": 358, "week": 517, "month": 679}
+TAB_PILL_W = 148
 TABS = [("server", "Server"), ("week", "Tuần"), ("month", "Tháng")]
 TAB_DAYS = {"week": 7, "month": 30}
 
-GOLD_TXT = (255, 214, 92)
+GOLD_TXT = (255, 221, 104)
 NAVY_STROKE = (8, 20, 70)
-
-
-def X(x):
-    return int(round(x * S))
-
-
-def Y(y):
-    return int(round(y * S))
 
 
 # ----------------------------------------------------------------------
 # TIỆN ÍCH CHỮ / SỐ
 # ----------------------------------------------------------------------
+_MEASURE = ImageDraw.Draw(Image.new("L", (4, 4)))
+
+
+def _tw(text, font, stroke=0):
+    return _MEASURE.textlength(text, font=font) + 2 * stroke
+
+
 @lru_cache(maxsize=128)
 def _font(px):
     for path in FONT_CANDIDATES:
@@ -117,7 +130,7 @@ def _font_for_text(text, px):
     for path in FONT_CANDIDATES:
         try:
             candidate = ImageFont.truetype(path, px)
-            missing = candidate.getmask("\ufffd")
+            missing = candidate.getmask("\U0010fffe")
             score = 0
             for ch in text:
                 if ch.isspace() or ord(ch) < 32 or ch in "\ufe0e\ufe0f\u200d":
@@ -134,9 +147,6 @@ def _font_for_text(text, px):
         except Exception:
             continue
     return best_font
-
-
-_EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]")
 
 
 def clean_name(name):
@@ -161,167 +171,224 @@ def fmt_short(n):
     return str(n)
 
 
-def _fit_text(d, text, base_px, max_w, min_px):
-    """Thu nhỏ chữ cho vừa; giữ nguyên ký tự đặc biệt, chỉ rút gọn khi quá dài."""
+def _stroke_for(px):
+    return max(2, int(px * 0.11))
+
+
+def _drop_missing(text, font):
+    """Bỏ ký tự mà font không có glyph (tránh hiện ô vuông xấu); giữ lại nếu bỏ hết."""
+    try:
+        missing = bytes(font.getmask("\U0010fffe"))
+        msize = font.getmask("\U0010fffe").size
+        keep = []
+        for ch in text:
+            if ch.isspace() or ch in "\ufe0e\ufe0f\u200d":
+                keep.append(ch)
+                continue
+            g = font.getmask(ch)
+            if g.size == msize and bytes(g) == missing:
+                continue
+            keep.append(ch)
+        out = " ".join("".join(keep).split())
+        return out or text
+    except Exception:
+        return text
+
+
+def _fit_text(text, base_px, max_w, min_px):
+    """Thu nhỏ chữ cho vừa; chỉ rút gọn (…) khi đã xuống cỡ nhỏ nhất mà vẫn dài."""
+    text = _drop_missing(text, _font_for_text(text, int(base_px)))
     px = int(base_px)
     while px > min_px:
         f = _font_for_text(text, px)
-        if d.textlength(text, font=f) <= max_w:
-            break
+        if _tw(text, f, _stroke_for(px)) <= max_w:
+            return f, text
         px -= 1
     f = _font_for_text(text, px)
-    while len(text) > 1 and d.textlength(text, font=f) > max_w:
+    st = _stroke_for(px)
+    if _tw(text, f, st) <= max_w:
+        return f, text
+    while len(text) > 1:
         text = text[:-1].rstrip()
-        candidate = text + "…"
-        if d.textlength(candidate, font=f) <= max_w:
-            text = candidate
-            break
+        if _tw(text + "…", f, st) <= max_w:
+            return f, text + "…"
     return f, text
 
 
-def _fit_coin(d, coin, max_w, base_px, min_px):
+def _fit_coin(coin, max_w, base_px, min_px):
     for txt in (fmt_money(coin), fmt_short(coin)):
         px = int(base_px)
         while px >= min_px:
             f = _font(px)
-            if d.textlength(txt, font=f) <= max_w:
+            if _tw(txt, f, _stroke_for(px)) <= max_w:
                 return f, txt
             px -= 1
     return _font(int(min_px)), fmt_short(coin)
 
 
-def _draw_coin_icon(d, cx, cy, r):
-    """Đồng coin vàng có bóng, viền kim loại và huy hiệu nổi ở giữa."""
-    if r <= 1:
-        d.ellipse((cx-r, cy-r, cx+r, cy+r), fill=(255, 205, 55))
-        return
-    d.ellipse((cx-r+1, cy-r+2, cx+r+1, cy+r+2), fill=(75, 42, 8))
-    d.ellipse((cx-r, cy-r, cx+r, cy+r), fill=(184, 104, 12),
-              outline=(255, 229, 132), width=max(1, r//5))
-    pad = max(1, int(r * .16))
-    d.ellipse((cx-r+pad, cy-r+pad, cx+r-pad, cy+r-pad),
-              fill=(255, 190, 35), outline=(255, 238, 165), width=max(1, r//7))
-    inner = max(1, int(r * .55))
-    d.ellipse((cx-inner, cy-inner, cx+inner, cy+inner),
-              fill=(238, 151, 18), outline=(255, 224, 112), width=max(1, r//8))
-    import math
+# ----------------------------------------------------------------------
+# ICON COIN (supersample 6x -> thu nhỏ, viền rất mịn)
+# ----------------------------------------------------------------------
+@lru_cache(maxsize=16)
+def _coin_icon(r):
+    k, pad = 6, 4
+    size = 2 * r + 2 * pad
+    big = Image.new("RGBA", (size * k, size * k), (0, 0, 0, 0))
+    g = ImageDraw.Draw(big)
+    c = size * k / 2
+    R = r * k
+
+    def circ(rad, dx=0.0, dy=0.0, **kw):
+        g.ellipse((c - rad + dx, c - rad + dy, c + rad + dx, c + rad + dy), **kw)
+
+    circ(R, 0, 2.2 * k, fill=(40, 20, 4, 150))                     # bóng đổ
+    circ(R, fill=(150, 78, 6, 255))                                  # thân viền tối
+    circ(R, outline=(255, 236, 150, 255), width=max(k, int(R * .13)))  # mép sáng
+    face = R * .84
+    steps = 14                                                       # mặt coin chuyển sắc
+    for i in range(steps):
+        t = i / (steps - 1)
+        rad = face * (1 - t * .78)
+        col = (int(250 + 5 * t), int(176 + 58 * t), int(30 + 80 * t), 255)
+        circ(rad, -t * R * .10, -t * R * .12, fill=col)
+    ring = face * .70
+    circ(ring, outline=(214, 128, 14, 255), width=max(k // 2, int(R * .07)))  # vòng chìm
     pts = []
     for i in range(10):
-        ang = -math.pi/2 + i * math.pi/5
-        rad = inner * (.72 if i % 2 == 0 else .34)
-        pts.append((cx + math.cos(ang)*rad, cy + math.sin(ang)*rad))
-    d.polygon(pts, fill=(255, 245, 190), outline=(255, 255, 225))
+        ang = -math.pi / 2 + i * math.pi / 5
+        rad = ring * (.62 if i % 2 == 0 else .26)
+        pts.append((c + math.cos(ang) * rad, c + math.sin(ang) * rad + R * .02))
+    g.polygon(pts, fill=(255, 247, 200, 255), outline=(222, 140, 18, 255))
+    g.arc((c - face, c - face, c + face, c + face), 200, 265,
+          fill=(255, 255, 235, 235), width=max(k // 2, int(R * .06)))  # bóng loáng
+    return big.resize((size, size), Image.LANCZOS), pad
 
 
-def _draw_coin_line(d, x, y, coin, max_w, px, center=False):
-    """Vẽ [icon coin] + số tiền. x,y theo toạ độ ảnh đã phóng to."""
-    icon_r = int(px * 0.42)
-    gap = int(px * 0.3)
-    f, txt = _fit_coin(d, coin, max_w - 2 * icon_r - gap, px, int(px * 0.6))
-    tw = d.textlength(txt, font=f)
-    total = 2 * icon_r + gap + tw
-    left = x - total / 2 if center else x
-    _draw_coin_icon(d, int(left + icon_r), int(y), icon_r)
-    d.text((left + 2 * icon_r + gap, y), txt, font=f, fill=GOLD_TXT, anchor="lm",
-           stroke_width=2, stroke_fill=NAVY_STROKE)
+# ----------------------------------------------------------------------
+# PAINTER: gom chữ + icon, cuối cùng đổ bóng mềm rồi vẽ chữ sắc nét lên trên
+# ----------------------------------------------------------------------
+class _Painter:
+    def __init__(self):
+        self.items = []
+
+    def text(self, xy, s, font, fill=(255, 255, 255), anchor="mm", stroke=None, shadow=True):
+        if stroke is None:
+            stroke = _stroke_for(getattr(font, "size", 24))
+        self.items.append(("t", xy, s, font, fill, anchor, stroke, shadow))
+
+    def coin_line(self, x, y, coin, max_w, px, center=False):
+        """[icon coin] + số tiền. (x, y) là tâm dòng; center=True thì căn giữa theo x."""
+        r = int(round(px * 0.5))
+        gap = int(round(px * 0.35))
+        f, txt = _fit_coin(coin, max_w - 2 * r - gap, px, int(px * 0.62))
+        st = _stroke_for(getattr(f, "size", px))
+        tw = _tw(txt, f, st)
+        total = 2 * r + gap + tw
+        left = x - total / 2 if center else x
+        self.items.append(("c", int(round(left + r)), int(round(y)), r))
+        self.text((left + 2 * r + gap + st, y), txt, f, fill=GOLD_TXT, anchor="lm", stroke=st)
+
+    def flush(self, img):
+        shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shadow)
+        for it in self.items:
+            if it[0] == "t" and it[7]:
+                _, (x, y), s, f, _fill, anc, st, _sh = it
+                sd.text((x, y + 3), s, font=f, fill=(3, 8, 40, 190), anchor=anc,
+                        stroke_width=st + 1, stroke_fill=(3, 8, 40, 190))
+        img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(3.2)))
+
+        d = ImageDraw.Draw(img)
+        for it in self.items:
+            if it[0] == "c":
+                _, cx, cy, r = it
+                icon, pad = _coin_icon(r)
+                img.alpha_composite(icon, (cx - r - pad, cy - r - pad))
+            else:
+                _, (x, y), s, f, fill, anc, st, _sh = it
+                d.text((x, y), s, font=f, fill=fill, anchor=anc,
+                       stroke_width=st, stroke_fill=NAVY_STROKE)
 
 
 # ----------------------------------------------------------------------
 # AVATAR
 # ----------------------------------------------------------------------
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=64)
 def _circle_mask(d):
-    big = Image.new("L", (d * 4, d * 4), 0)
-    ImageDraw.Draw(big).ellipse((0, 0, d * 4 - 1, d * 4 - 1), fill=255)
+    k = 6
+    big = Image.new("L", (d * k, d * k), 0)
+    ImageDraw.Draw(big).ellipse((0, 0, d * k - 1, d * k - 1), fill=255)
     return big.resize((d, d), Image.LANCZOS)
 
 
-def _default_avatar(d):
-    im = Image.new("RGBA", (d, d), (14, 40, 110, 255))
-    dr = ImageDraw.Draw(im)
-    dr.ellipse((d * .34, d * .18, d * .66, d * .50), fill=(249, 180, 43))
-    dr.ellipse((d * .20, d * .54, d * .80, d * 1.05), fill=(249, 180, 43))
-    return im
-
-
 def _load_avatar(data, d):
-    if data:
-        try:
-            im = Image.open(io.BytesIO(data)).convert("RGBA")
-            return ImageOps.fit(im, (d, d), Image.LANCZOS)
-        except Exception:
-            pass
-    return _default_avatar(d)
+    try:
+        im = Image.open(io.BytesIO(data)).convert("RGBA")
+        im = ImageOps.fit(im, (d, d), Image.LANCZOS)
+        return im.filter(ImageFilter.UnsharpMask(radius=1.1, percent=55, threshold=2))
+    except Exception:
+        return None
 
 
-def _paste_avatar(img, cx, cy, r, data, ring=None, ring_w=2.0):
-    R = int(round(r * S))
-    if ring:
-        RW = int(round((r + ring_w) * S))
-        img.paste(Image.new("RGBA", (2 * RW, 2 * RW), tuple(ring) + (255,)),
-                  (X(cx) - RW, Y(cy) - RW), _circle_mask(2 * RW))
-    avatar = _load_avatar(data, 2 * R)
-    mask = _circle_mask(2 * R)
-    img.paste(avatar, (X(cx) - R, Y(cy) - R), mask)
-
+def _paste_avatar_inside(img, cx, cy, r, data):
+    """Đặt avatar trong vòng tròn có sẵn của khung (giữ nguyên viền/ánh sáng của khung)."""
+    if not data:
+        return          # không có avatar -> giữ nguyên avatar mẫu của khung
+    d = 2 * int(r)
+    av = _load_avatar(data, d)
+    if av is None:
+        return
+    img.paste(av, (int(cx) - d // 2, int(cy) - d // 2), _circle_mask(d))
 
 
 # ----------------------------------------------------------------------
-# NỀN KHUNG (xử lý 1 lần rồi cache)
+# NỀN KHUNG (nạp 1 lần, KHÔNG resample nếu đã đúng 1811x868)
 # ----------------------------------------------------------------------
 @lru_cache(maxsize=1)
 def _base():
-    """Nạp duy nhất template trống, chuẩn hóa về hệ tọa độ 1024x491."""
     im = Image.open(template_path()).convert("RGBA")
-    if im.size != (W0, H0):
-        im = ImageOps.fit(im, (W0, H0), Image.LANCZOS)
-    return im.resize((W0 * S, H0 * S), Image.LANCZOS).convert("RGBA")
+    if im.size != (W, H):
+        im = ImageOps.fit(im, (W, H), Image.LANCZOS)
+    return im
 
 
 # ----------------------------------------------------------------------
 # VẼ ẢNH
 # ----------------------------------------------------------------------
-def _draw_header(d, tab):
-    """Vẽ lại thanh tab trên cùng một template; mỗi lần chỉ sáng một tab."""
-    bx0, by0, bx1, by1 = 156, 51, 426, 80
-    d.rounded_rectangle(
-        (X(bx0), Y(by0), X(bx1), Y(by1)),
-        radius=14 * S,
-        fill=(13, 29, 91),
-        outline=(35, 43, 135),
-        width=2 * S,
-    )
-    inner_left, inner_right = bx0 + 3, bx1 - 3
-    sec = (inner_right - inner_left) / 3
-    for i, (key, label) in enumerate(TABS):
-        sx0 = inner_left + i * sec
-        sx1 = inner_left + (i + 1) * sec
-        cx, cy = (sx0 + sx1) / 2, (by0 + by1) / 2
-        if key == tab:
-            d.rounded_rectangle(
-                (X(sx0), Y(by0 + 2), X(sx1), Y(by1 - 2)),
-                radius=11 * S,
-                fill=(255, 190, 28),
-                outline=(255, 218, 91),
-                width=1 * S,
-            )
-            color = (37, 39, 91)
-        else:
-            color = (245, 245, 255)
-        d.text((X(cx), Y(cy)), label, font=_font(19 * S // 2),
-               fill=color, anchor="mm")
+def _draw_header(img, p, tab):
+    """Vẽ lại thanh tab (supersample 4x cho viền mịn); mỗi lần chỉ sáng một tab."""
+    k = 4
+    x0, y0, x1, y1 = 268, 78, 776, 154
+    layer = Image.new("RGBA", ((x1 - x0) * k, (y1 - y0) * k), (0, 0, 0, 0))
+    g = ImageDraw.Draw(layer)
+
+    def rr(box, rad, **kw):
+        g.rounded_rectangle(((box[0] - x0) * k, (box[1] - y0) * k,
+                             (box[2] - x0) * k, (box[3] - y0) * k), radius=rad * k, **kw)
+
+    bx0, by0, bx1, by1 = TAB_BAR
+    rr(TAB_BAR, (by1 - by0) / 2, fill=(14, 28, 92, 255), outline=(38, 48, 142, 255), width=2 * k)
+    for key, _label in TABS:
+        if key != tab:
+            continue
+        cx = TAB_CENTERS[key]
+        pill = (cx - TAB_PILL_W / 2, by0 + 4, cx + TAB_PILL_W / 2, by1 - 4)
+        rr(pill, (pill[3] - pill[1]) / 2, fill=(255, 190, 28, 255), outline=(255, 224, 108, 255), width=2 * k)
+        hl = (pill[0] + 12, pill[1] + 3, pill[2] - 12, pill[1] + 12)   # vệt sáng phía trên
+        rr(hl, 5, fill=(255, 226, 120, 120))
+    layer = layer.resize((x1 - x0, y1 - y0), Image.LANCZOS)
+    img.alpha_composite(layer, (x0, y0))
+
+    cy = (by0 + by1) / 2 + 1
+    f = _font(28)
+    for key, label in TABS:
+        active = key == tab
+        p.text((TAB_CENTERS[key], cy), label, f,
+               fill=(38, 30, 86) if active else (240, 244, 255),
+               anchor="mm", stroke=0, shadow=False)
 
 
-def _paste_avatar_inside(img, cx, cy, r, data):
-    """Đặt avatar trong vòng tròn có sẵn của template, không vẽ thêm viền."""
-    if not data:
-        return
-    R = int(round(r * S))
-    avatar = _load_avatar(data, 2 * R)
-    img.paste(avatar, (X(cx) - R, Y(cy) - R), _circle_mask(2 * R))
-
-
-def _draw_left_top3(img, d, rows, avatars):
+def _draw_left_top3(img, p, rows, avatars):
     for rank, cfg in LEFT_TOP3.items():
         if rank > len(rows):
             continue
@@ -329,61 +396,46 @@ def _draw_left_top3(img, d, rows, avatars):
         cx, cy = cfg["c"]
         _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")))
 
-        name_font, name = _fit_text(
-            d, clean_name(row["name"]), 14 * S, cfg["wmax"] * S, 9 * S
-        )
-        d.text((X(cx), Y(cfg["name_y"])), name, font=name_font,
-               fill=(255, 255, 255), anchor="mm",
-               stroke_width=2 * S, stroke_fill=NAVY_STROKE)
-        _draw_coin_line(
-            d, X(cx), Y(cfg["coin_y"]), row["coin"], cfg["wmax"] * S,
-            13 * S, center=True
-        )
+        f, name = _fit_text(clean_name(row["name"]), cfg["name_px"], cfg["wmax"], 15)
+        p.text((cx, cfg["name_y"]), name, f)
+        p.coin_line(cx, cfg["coin_y"], row["coin"], cfg["wmax"], cfg["coin_px"], center=True)
 
 
-def _draw_rows(img, d, rows, avatars):
+def _draw_rows(img, p, rows, avatars):
     for i, top in enumerate(ROW_TOPS):
         idx = 3 + i
         if idx >= len(rows):
             continue  # giữ nguyên avatar mẫu trong thanh trống
-
         row = rows[idx]
-        cy = top + 20
-        avatar_url = row.get("avatar_url")
+        cy = top + ROW_H / 2
         _paste_avatar_inside(img, ROW_AVATAR["x"], cy, ROW_AVATAR["r"],
-                            avatars.get(avatar_url))
-
-        name_font, name = _fit_text(
-            d, clean_name(row["name"]), 13 * S, 160 * S, 9 * S
-        )
-        d.text((X(243), Y(top + 13)), name, font=name_font,
-               fill=(255, 255, 255), anchor="lm",
-               stroke_width=2 * S, stroke_fill=NAVY_STROKE)
-        _draw_coin_line(d, X(243), Y(top + 31), row["coin"],
-                        160 * S, 12 * S)
+                             avatars.get(row.get("avatar_url")))
+        f, name = _fit_text(clean_name(row["name"]), 28, ROW_TEXT_W, 16)
+        p.text((ROW_TEXT_X, cy - 14), name, f, anchor="lm")
+        p.coin_line(ROW_TEXT_X, cy + 17, row["coin"], ROW_TEXT_W, 24)
 
 
 def _draw_right_top3(img, rows, avatars):
-    """Cột phải chỉ thay avatar; giữ nguyên số hạng, nhãn và bục trong template."""
+    """Cột phải chỉ thay avatar; giữ nguyên số hạng, nhãn và bục trong khung."""
     for rank, cfg in RIGHT_AVATARS.items():
         if rank > len(rows):
             continue
         row = rows[rank - 1]
         cx, cy = cfg["c"]
-        _paste_avatar_inside(img, cx, cy, cfg["r"],
-                             avatars.get(row.get("avatar_url")))
+        _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")))
 
 
 def render_board(rows, tab, avatars):
-    """Dùng một template cho Server/Tuần/Tháng; chỉ đổi tab đang sáng."""
+    """Dùng một khung cho Server/Tuần/Tháng; chỉ đổi tab đang sáng."""
     img = _base().copy()
-    d = ImageDraw.Draw(img)
-    _draw_header(d, tab)
-    _draw_left_top3(img, d, rows, avatars)
-    _draw_rows(img, d, rows, avatars)
+    p = _Painter()
+    _draw_header(img, p, tab)
+    _draw_left_top3(img, p, rows, avatars)
+    _draw_rows(img, p, rows, avatars)
     _draw_right_top3(img, rows, avatars)
+    p.flush(img)
     buf = io.BytesIO()
-    img.save(buf, "PNG", optimize=True)
+    img.convert("RGB").save(buf, "PNG", compress_level=6)
     return buf.getvalue()
 
 
@@ -419,7 +471,7 @@ def query_active_by_coin(days, limit):
 
 
 # ----------------------------------------------------------------------
-# TẢI AVATAR (cache 1 giờ)
+# TẢI AVATAR (size 512 để nét, cache 1 giờ)
 # ----------------------------------------------------------------------
 _avatar_cache = {}
 AVATAR_TTL = 3600
@@ -433,7 +485,7 @@ async def fetch_avatars(urls):
         if hit and time.time() - hit[0] < AVATAR_TTL:
             return url, hit[1]
         try:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as r:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
                 data = await r.read()
                 _avatar_cache[url] = (time.time(), data)
                 return url, data
@@ -518,7 +570,7 @@ class TopCog(commands.Cog):
     async def cog_load(self):
         ensure_activity_table()
         try:
-            await asyncio.to_thread(_base)      # dựng sẵn nền 1 lần lúc khởi động
+            await asyncio.to_thread(_base)      # nạp sẵn nền 1 lần lúc khởi động
         except Exception as e:
             # thiếu ảnh/lỗi ảnh thì KHÔNG làm sập bot, chỉ báo log
             print(f"[Top] ⚠️ Chưa dựng được bảng xếp hạng ảnh: {e}")
@@ -559,7 +611,7 @@ class TopCog(commands.Cog):
             except Exception:
                 return "Người chơi ẩn", None
         try:
-            url = user.display_avatar.replace(size=128, format="png").url
+            url = user.display_avatar.replace(size=512, format="png").url
         except Exception:
             url = str(user.display_avatar.url)
         return user.display_name, url
@@ -628,3 +680,29 @@ class TopCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(TopCog(bot))
+
+
+# ----------------------------------------------------------------------
+# XEM THỬ NHANH (không cần Discord):  python top.py
+# ----------------------------------------------------------------------
+if __name__ == "__main__":
+    import random
+
+    def _fake_avatar(seed):
+        rnd = random.Random(seed)
+        im = Image.new("RGB", (512, 512), tuple(rnd.randint(40, 220) for _ in range(3)))
+        dr = ImageDraw.Draw(im)
+        dr.ellipse((170, 90, 342, 262), fill=(255, 255, 255))
+        dr.ellipse((90, 290, 422, 620), fill=(255, 255, 255))
+        b = io.BytesIO()
+        im.save(b, "PNG")
+        return b.getvalue()
+
+    names = ["Khánh Sơn 👑", "Nguyễn Thị Hương Giang", "Minh Tú", "Ông Trùm Server Vĩ Đại",
+             "ツ Sakura", "Trần Văn A", "bé Mèo"]
+    coins = [12_345_678_900, 4_500_000_000, 987_654_321, 120_500_000, 8_800_000, 250_000, 1_200]
+    rows = [{"name": n, "coin": c, "avatar_url": f"u{i}"} for i, (n, c) in enumerate(zip(names, coins))]
+    av = {f"u{i}": _fake_avatar(i) for i in range(7)}
+    for t in ("server", "week", "month"):
+        Path(f"top_preview_{t}.png").write_bytes(render_board(rows, t, av))
+        print("đã tạo", f"top_preview_{t}.png")
