@@ -1,5 +1,5 @@
 """
-top.py - Bảng xếp hạng đại gia dạng ẢNH (vẽ trực tiếp lên khung assets/top.png)
+top.py - Bảng xếp hạng đại gia dạng ẢNH (vẽ lên khung assets/top.png)
 
 Cần có trong thư mục assets/ (cạnh file này):
     top.png                    <- ảnh khung 1811x868
@@ -12,15 +12,17 @@ Cần: pip install pillow aiohttp
     Tuần   : tất cả người đã dùng bot trong 7 ngày gần nhất (mọi server), xếp theo coin
     Tháng  : tất cả người đã dùng bot trong 30 ngày gần nhất (mọi server), xếp theo coin
 
-Chống mờ (bản này):
-  * Ghép lại bố cục gọn (~1230x808, tỉ lệ gần khung hiển thị của Discord): bảng giữ
-    nguyên cỡ gốc, bục top 3 bên phải thu nhỏ POD_SCALE rồi nối liền nền -> chữ trong bảng
-    không bị Discord co nhỏ như khi gửi cả ảnh 1811px.
-  * Không làm nét thêm, không nén mất dữ liệu.
-  * Lưu LOSSLESS (WebP lossless, lỗi thì PNG) -> không nhòe màu ở viền chữ.
-  * Hình tròn / icon coin / thanh tab vẽ supersample 4-6x rồi thu nhỏ -> viền mịn.
+BẢN NHẸ (tối ưu CPU/RAM cho host yếu):
+  * Phần tĩnh (cắt khung, thu nhỏ bục, ghép nền, mặt nạ) chỉ làm 1 LẦN lúc bot khởi động.
+    Mỗi lần vẽ chỉ copy ảnh đã ghép sẵn rồi vẽ avatar + chữ lên.
+  * Lưu JPEG 4:4:4 chất lượng 95 (~6 ms, ~300 KB) thay vì WebP lossless (~750 ms).
+    Đổi OUT_FORMAT = "PNG" nếu muốn lossless tuyệt đối (nặng hơn, ~60 ms).
+  * Avatar tải size 256 (đủ nét), cache có giới hạn; tên/avatar người ngoài server cache 10 phút
+    (không gọi API Discord mỗi lần bấm Tuần/Tháng).
+  * Gọi .top xong tự dựng sẵn Tuần/Tháng ở nền -> bấm nút là ra ngay.
+  * Cache ảnh gọn (12 bảng), giới hạn cache font.
 
-Xem thử nhanh không cần Discord:  python top.py   -> tạo top_preview_*.webp
+Xem thử nhanh không cần Discord:  python top.py   -> tạo top_preview_*.jpg
 """
 import asyncio
 import io
@@ -69,14 +71,16 @@ FONT_CANDIDATES = [
 # ----------------------------------------------------------------------
 W, H = 1811, 868
 
-# Vùng cắt (toạ độ trên khung 1811x868). Chỉnh nếu dư nền / lẹm viền.
 CARD_CROP = (236, 14, 806, 822)      # khung bảng bên trái (giữ nguyên cỡ)
 POD_X = (930, 1795)                  # cột x lấy phần bục + tiêu đề (lấy full chiều cao khung)
 POD_SCALE = 0.78                     # thu nhỏ phần bục (to hơn = bục lớn nhưng ảnh rộng hơn)
 CARD_FADE = 16                       # mép phải của bảng mờ dần vào nền (px)
 POD_VFADE = 48                       # mép trên/dưới của bục mờ dần vào nền trơn (px)
 
-# Avatar trên bục bên phải
+OUT_FORMAT = "JPEG"                  # "JPEG" (nhẹ, nhanh) hoặc "PNG" (lossless, nặng hơn)
+OUT_NAME = "top.png" if OUT_FORMAT == "PNG" else "top.jpg"
+
+# Avatar trên bục bên phải (toạ độ trên khung gốc)
 RIGHT_AVATARS = {
     1: dict(c=(1369, 425), r=134),
     2: dict(c=(1085, 470), r=108),
@@ -120,12 +124,12 @@ def _tw(text, font, stroke=0):
     return _MEASURE.textlength(text, font=font) + 2 * stroke
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=64)
 def _truetype(path, px):
     return ImageFont.truetype(path, px)
 
 
-@lru_cache(maxsize=128)
+@lru_cache(maxsize=64)
 def _font(px):
     for path in FONT_CANDIDATES:
         try:
@@ -135,7 +139,7 @@ def _font(px):
     return ImageFont.load_default(px)
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=256)
 def _best_path(text):
     """File font phủ nhiều ký tự của `text` nhất (tính 1 lần cho mỗi tên)."""
     best, best_score = None, -1
@@ -194,7 +198,7 @@ def _stroke_for(px):
 
 
 def _drop_missing(text, font):
-    """Bỏ ký tự mà font không có glyph (tránh hiện ô vuông xấu); giữ lại nếu bỏ hết."""
+    """Bỏ ký tự mà font không có glyph (tránh hiện ô vuông xấu); có thể trả về rỗng."""
     try:
         missing = bytes(font.getmask("\U0010fffe"))
         msize = font.getmask("\U0010fffe").size
@@ -207,7 +211,7 @@ def _drop_missing(text, font):
             if g.size == msize and bytes(g) == missing:
                 continue
             keep.append(ch)
-        return " ".join("".join(keep).split())     # có thể rỗng -> _fit_text tự dùng fallback
+        return " ".join("".join(keep).split())
     except Exception:
         return text
 
@@ -245,7 +249,7 @@ def _fit_coin(coin, max_w, base_px, min_px):
 
 
 # ----------------------------------------------------------------------
-# ICON COIN (supersample 6x -> thu nhỏ, viền rất mịn)
+# ICON COIN (supersample 6x -> thu nhỏ, viền rất mịn; cache theo bán kính)
 # ----------------------------------------------------------------------
 @lru_cache(maxsize=16)
 def _coin_icon(r):
@@ -284,6 +288,7 @@ def _coin_icon(r):
 
 # ----------------------------------------------------------------------
 # PAINTER: gom chữ + icon, cuối cùng đổ bóng mềm rồi vẽ chữ sắc nét lên trên
+# (ox, oy = góc trái-trên của vùng đang vẽ trên khung gốc; toạ độ truyền vào là toạ độ khung gốc)
 # ----------------------------------------------------------------------
 def _aa_pill(img, box, fill, outline=None, ow=1.5):
     """Viên thuốc bo tròn, vẽ supersample 4x cho viền mịn."""
@@ -309,22 +314,24 @@ def _coin_layout(coin, max_w, px):
 
 
 class _Painter:
-    def __init__(self):
+    def __init__(self, ox=0, oy=0):
         self.items = []
+        self.ox, self.oy = ox, oy
 
     def text(self, xy, s, font, fill=(255, 255, 255), anchor="mm", stroke=None, shadow=True):
         if stroke is None:
             stroke = _stroke_for(getattr(font, "size", 24))
+        xy = (xy[0] - self.ox, xy[1] - self.oy)
         self.items.append(("t", xy, s, font, fill, anchor, stroke, shadow))
 
     def coin_line(self, x, y, coin, max_w, px, align="center"):
         """Viên thuốc nền tối viền vàng chứa [icon coin] + số tiền. Trả về chiều rộng viên thuốc."""
         f, txt, r, gap, padx, pw, ph = _coin_layout(coin, max_w, px)
-        left = {"center": x - pw / 2, "right": x - pw}.get(align, x)
+        left = {"center": x - pw / 2, "right": x - pw}.get(align, x) - self.ox
+        y = y - self.oy
         self.items.append(("p", (left, y - ph / 2, left + pw, y + ph / 2)))
         self.items.append(("c", int(round(left + padx + r)), int(round(y)), r))
-        self.text((left + padx + 2 * r + gap, y), txt, f, fill=GOLD_TXT,
-                  anchor="lm", stroke=0, shadow=False)
+        self.items.append(("t", (left + padx + 2 * r + gap, y), txt, f, GOLD_TXT, "lm", 0, False))
         return pw
 
     def flush(self, img):
@@ -367,7 +374,7 @@ class _Painter:
 # ----------------------------------------------------------------------
 # AVATAR
 # ----------------------------------------------------------------------
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=32)
 def _circle_mask(d):
     k = 6
     big = Image.new("L", (d * k, d * k), 0)
@@ -376,6 +383,7 @@ def _circle_mask(d):
 
 
 _av_proc = {}
+AV_PROC_MAX = 40
 
 
 def _load_avatar(data, d):
@@ -390,7 +398,7 @@ def _load_avatar(data, d):
     except Exception:
         return None
     try:
-        if len(_av_proc) >= 30:
+        if len(_av_proc) >= AV_PROC_MAX:
             _av_proc.pop(next(iter(_av_proc)))
     except Exception:
         _av_proc.clear()
@@ -398,18 +406,24 @@ def _load_avatar(data, d):
     return im
 
 
-def _aa_ring(img, cx, cy, r, color, w):
+@lru_cache(maxsize=16)
+def _ring_layer(r, color, w):
+    """Vòng viền avatar (supersample 6x) - chỉ có vài loại nên cache luôn, khỏi vẽ lại mỗi lần."""
     k, pad = 6, 3
     size = 2 * (r + pad)
     layer = Image.new("RGBA", (size * k, size * k), (0, 0, 0, 0))
     c, R = size * k / 2, r * k
     ImageDraw.Draw(layer).ellipse((c - R, c - R, c + R, c + R),
-                                  outline=tuple(color) + (255,), width=int(w * k))
-    img.alpha_composite(layer.resize((size, size), Image.LANCZOS),
-                        (int(cx) - r - pad, int(cy) - r - pad))
+                                  outline=tuple(color) + (255,), width=max(1, int(w * k)))
+    return layer.resize((size, size), Image.LANCZOS), pad
 
 
-def _paste_avatar_inside(img, cx, cy, r, data, rim=None):
+def _aa_ring(img, cx, cy, r, color, w):
+    ring, pad = _ring_layer(int(r), tuple(color), float(w))
+    img.alpha_composite(ring, (int(cx) - int(r) - pad, int(cy) - int(r) - pad))
+
+
+def _paste_avatar_inside(img, cx, cy, r, data, rim=None, rim_w=RIM_W):
     """Đặt avatar trong vòng tròn có sẵn của khung (giữ nguyên viền/ánh sáng của khung)."""
     if not data:
         return          # không có avatar -> giữ nguyên avatar mẫu của khung
@@ -418,26 +432,79 @@ def _paste_avatar_inside(img, cx, cy, r, data, rim=None):
     if av is None:
         return
     img.paste(av, (int(cx) - d // 2, int(cy) - d // 2), _circle_mask(d))
-    if rim and RIM_W:
-        _aa_ring(img, cx, cy, int(r), rim, RIM_W)
+    if rim and rim_w:
+        _aa_ring(img, cx, cy, int(r), rim, rim_w)
 
 
 # ----------------------------------------------------------------------
-# NỀN KHUNG (nạp 1 lần, KHÔNG resample nếu đã đúng 1811x868)
+# PHẦN TĨNH: làm 1 lần duy nhất (cắt khung, thu nhỏ bục, ghép nền, mặt nạ mép)
 # ----------------------------------------------------------------------
+class _Static:
+    __slots__ = ("card", "bg", "mask", "cw", "ch", "top")
+
+
+def _smooth_fill(strip, w, h):
+    """Nền trơn: lấy dải pixel mép, làm mượt theo chiều ngang, rồi lấp đầy theo chiều dọc."""
+    small = strip.resize((max(2, w // 70), 1), Image.BOX)
+    return small.resize((w, max(1, h)), Image.BICUBIC)
+
+
 @lru_cache(maxsize=1)
-def _base():
-    im = Image.open(template_path()).convert("RGBA")
-    if im.size != (W, H):
-        im = ImageOps.fit(im, (W, H), Image.LANCZOS)
-    return im
+def _static():
+    base = Image.open(template_path()).convert("RGB")
+    if base.size != (W, H):
+        base = ImageOps.fit(base, (W, H), Image.LANCZOS)
+
+    card = base.crop(CARD_CROP)
+    cw, ch = card.size
+
+    # Bục: lấy toàn chiều cao khung gốc rồi thu nhỏ
+    pod = base.crop((POD_X[0], 0, POD_X[1], base.height))
+    pw, ph = int(pod.width * POD_SCALE), int(pod.height * POD_SCALE)
+    pod = pod.resize((pw, ph), Image.LANCZOS)
+    top = max(0, (ch - ph) // 2)
+    bot = max(0, ch - top - ph)
+
+    right = Image.new("RGB", (pw, ch))
+    if top > 0:      # dải trên/dưới bục: nền tím trơn (không kéo dãn hoa văn -> không vệt mờ)
+        right.paste(_smooth_fill(pod.crop((0, 0, pw, 3)), pw, top + POD_VFADE), (0, 0))
+    if bot > 0:
+        right.paste(_smooth_fill(pod.crop((0, ph - 3, pw, ph)), pw, bot + POD_VFADE),
+                    (0, ch - bot - POD_VFADE))
+    m = Image.new("L", (pw, ph), 255)       # mép trên/dưới của bục mờ dần vào nền trơn
+    d = ImageDraw.Draw(m)
+    for i in range(POD_VFADE):
+        a = int(255 * i / POD_VFADE)
+        if top > 0:
+            d.line((0, i, pw, i), fill=a)
+        if bot > 0:
+            d.line((0, ph - 1 - i, pw, ph - 1 - i), fill=a)
+    right.paste(pod, (0, top), m)
+
+    canvas = Image.new("RGB", (cw + pw, ch))
+    canvas.paste(right, (cw, 0))
+    # Khoảng giữa bảng và bục: kéo dãn cột nền ngoài cùng bên trái của bục
+    edge = right.crop((0, 0, 2, ch)).resize((cw, ch), Image.BILINEAR).filter(ImageFilter.GaussianBlur(12))
+    canvas.paste(edge, (0, 0))
+
+    # Mặt nạ: mép phải của bảng mờ dần vào nền
+    mask = Image.new("L", (cw, ch), 255)
+    ImageDraw.Draw(mask).rectangle((cw - CARD_FADE, 0, cw, ch), fill=0)
+    mask = mask.filter(ImageFilter.GaussianBlur(CARD_FADE / 3))
+
+    s = _Static()
+    s.card = card.convert("RGBA")
+    s.bg = canvas.convert("RGBA")
+    s.mask, s.cw, s.ch, s.top = mask, cw, ch, top
+    return s
 
 
 # ----------------------------------------------------------------------
-# VẼ ẢNH
+# VẼ ẢNH (mỗi lần chỉ vẽ avatar + chữ lên bản copy của ảnh đã ghép sẵn)
 # ----------------------------------------------------------------------
 def _draw_header(img, p, tab):
     """Vẽ lại thanh tab (supersample 4x cho viền mịn); mỗi lần chỉ sáng một tab."""
+    ox, oy = CARD_CROP[0], CARD_CROP[1]
     k = 4
     x0, y0, x1, y1 = 268, 78, 776, 154
     layer = Image.new("RGBA", ((x1 - x0) * k, (y1 - y0) * k), (0, 0, 0, 0))
@@ -456,7 +523,7 @@ def _draw_header(img, p, tab):
         pill = (cx - TAB_PILL_W / 2, by0 + 4, cx + TAB_PILL_W / 2, by1 - 4)
         rr(pill, (pill[3] - pill[1]) / 2, fill=(255, 190, 28, 255), outline=(255, 224, 108, 255), width=2 * k)
     layer = layer.resize((x1 - x0, y1 - y0), Image.LANCZOS)
-    img.alpha_composite(layer, (x0, y0))
+    img.alpha_composite(layer, (x0 - ox, y0 - oy))
 
     cy = (by0 + by1) / 2 + 1
     f = _font(28)
@@ -468,12 +535,13 @@ def _draw_header(img, p, tab):
 
 
 def _draw_left_top3(img, p, rows, avatars):
+    ox, oy = CARD_CROP[0], CARD_CROP[1]
     for rank, cfg in LEFT_TOP3.items():
         if rank > len(rows):
             continue
         row = rows[rank - 1]
         cx, cy = cfg["c"]
-        _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")), RIM[rank])
+        _paste_avatar_inside(img, cx - ox, cy - oy, cfg["r"], avatars.get(row.get("avatar_url")), RIM[rank])
 
         f, name = _fit_text(clean_name(row["name"]), cfg["name_px"], cfg["wmax"], cfg["name_px"] - 6,
                             row.get("fallback") or "Người chơi")
@@ -482,13 +550,14 @@ def _draw_left_top3(img, p, rows, avatars):
 
 
 def _draw_rows(img, p, rows, avatars):
+    ox, oy = CARD_CROP[0], CARD_CROP[1]
     for i, top in enumerate(ROW_TOPS):
         idx = 3 + i
         if idx >= len(rows):
             continue  # giữ nguyên avatar mẫu trong thanh trống
         row = rows[idx]
         cy = top + ROW_H / 2
-        _paste_avatar_inside(img, ROW_AVATAR["x"], cy, ROW_AVATAR["r"],
+        _paste_avatar_inside(img, ROW_AVATAR["x"] - ox, cy - oy, ROW_AVATAR["r"],
                              avatars.get(row.get("avatar_url")))
         pw = p.coin_line(ROW_RIGHT, cy, row["coin"], 200, 26, align="right")   # coin ở bên phải
         f, name = _fit_text(clean_name(row["name"]), 35, ROW_RIGHT - pw - 16 - ROW_TEXT_X, 24,
@@ -496,97 +565,44 @@ def _draw_rows(img, p, rows, avatars):
         p.text((ROW_TEXT_X, cy), name, f, anchor="lm", stroke=0)               # tên ở giữa-trái
 
 
-def _draw_right_top3(img, rows, avatars):
-    """Cột phải chỉ thay avatar; giữ nguyên số hạng, nhãn và bục trong khung."""
+def _draw_right_top3(canvas, st, rows, avatars):
+    """Bục bên phải (đã thu nhỏ sẵn): vẽ avatar thẳng ở cỡ cuối -> nét, không phải resize cả ảnh."""
+    s = POD_SCALE
     for rank, cfg in RIGHT_AVATARS.items():
         if rank > len(rows):
             continue
         row = rows[rank - 1]
-        cx, cy = cfg["c"]
-        _paste_avatar_inside(img, cx, cy, cfg["r"], avatars.get(row.get("avatar_url")), RIM[rank])
-
-
-def _smooth_fill(strip, w, h):
-    """Nền trơn: lấy dải pixel mép, làm mượt theo chiều ngang, rồi lấp đầy theo chiều dọc."""
-    small = strip.resize((max(2, w // 70), 1), Image.BOX)
-    return small.resize((w, max(1, h)), Image.BICUBIC)
-
-
-def _compose(img):
-    """Bảng (cỡ gốc) + bục (thu nhỏ) ghép thành 1 ảnh gọn, nền liền mạch không lộ đường nối."""
-    card = img.crop(CARD_CROP)
-    cw, ch = card.size
-    # Bục: lấy toàn chiều cao khung gốc rồi thu nhỏ
-    pod = img.crop((POD_X[0], 0, POD_X[1], img.height))
-    pw, ph = int(pod.width * POD_SCALE), int(pod.height * POD_SCALE)
-    pod = pod.resize((pw, ph), Image.LANCZOS)
-    top = max(0, (ch - ph) // 2)
-    bot = max(0, ch - top - ph)
-    right = Image.new("RGB", (pw, ch))
-    # Dải trên/dưới bục: nền tím trơn (không kéo dãn hoa văn -> không bị vệt mờ)
-    if top > 0:
-        right.paste(_smooth_fill(pod.crop((0, 0, pw, 3)), pw, top + POD_VFADE), (0, 0))
-    if bot > 0:
-        right.paste(_smooth_fill(pod.crop((0, ph - 3, pw, ph)), pw, bot + POD_VFADE),
-                    (0, ch - bot - POD_VFADE))
-    # Bục: mép trên/dưới mờ dần vào nền trơn
-    m = Image.new("L", (pw, ph), 255)
-    d = ImageDraw.Draw(m)
-    for i in range(POD_VFADE):
-        a = int(255 * i / POD_VFADE)
-        if top > 0:
-            d.line((0, i, pw, i), fill=a)
-        if bot > 0:
-            d.line((0, ph - 1 - i, pw, ph - 1 - i), fill=a)
-    right.paste(pod, (0, top), m)
-    canvas = Image.new("RGB", (cw + pw, ch))
-    canvas.paste(right, (cw, 0))
-    # Khoảng giữa bảng và bục: kéo dãn cột nền ngoài cùng bên trái của bục
-    edge = right.crop((0, 0, 2, ch)).resize((cw, ch), Image.BILINEAR).filter(ImageFilter.GaussianBlur(12))
-    canvas.paste(edge, (0, 0))
-    # Bảng cỡ gốc, mép phải mờ dần vào nền
-    mask = Image.new("L", (cw, ch), 255)
-    ImageDraw.Draw(mask).rectangle((cw - CARD_FADE, 0, cw, ch), fill=0)
-    mask = mask.filter(ImageFilter.GaussianBlur(CARD_FADE / 3))
-    canvas.paste(card, (0, 0), mask)
-    return canvas
-
-
-OUT_NAME = "top.webp"
+        cx = st.cw + (cfg["c"][0] - POD_X[0]) * s
+        cy = st.top + cfg["c"][1] * s
+        r = int(round(cfg["r"] * s))
+        _paste_avatar_inside(canvas, cx, cy, r, avatars.get(row.get("avatar_url")),
+                             RIM[rank], max(2.0, RIM_W * s))
 
 
 def _encode(img):
-    """Lossless: WebP lossless (nhẹ), lỗi thì PNG. Không nén mất dữ liệu -> không nhòe viền chữ."""
-    global OUT_NAME
     buf = io.BytesIO()
-    try:
-        img.save(buf, "WEBP", lossless=True, quality=100, method=4)
-        OUT_NAME = "top.webp"
-    except Exception:
-        buf = io.BytesIO()
-        img.save(buf, "PNG", compress_level=6)
-        OUT_NAME = "top.png"
+    if OUT_FORMAT == "PNG":
+        img.save(buf, "PNG", compress_level=1)
+    else:
+        img.save(buf, "JPEG", quality=95, subsampling=0)
     return buf.getvalue()
 
 
-def _tab_base(tab):
-    """Khung + thanh tab (vẽ mới mỗi lần, rẻ; không giữ cache để đỡ tốn RAM)."""
-    img = _base().copy()
-    p = _Painter()
-    _draw_header(img, p, tab)
-    p.flush(img)
-    return img
-
-
 def render_board(rows, tab, avatars):
-    """Vẽ ở độ phân giải gốc, ghép bảng + bục, lưu lossless."""
-    img = _tab_base(tab)
-    p = _Painter()
-    _draw_left_top3(img, p, rows, avatars)
-    _draw_rows(img, p, rows, avatars)
-    _draw_right_top3(img, rows, avatars)
-    p.flush(img)
-    return _encode(_compose(img.convert("RGB")))
+    st = _static()
+    ox, oy = CARD_CROP[0], CARD_CROP[1]
+
+    card = st.card.copy()                       # bảng (cỡ gốc, ~570x808)
+    p = _Painter(ox, oy)
+    _draw_header(card, p, tab)
+    _draw_left_top3(card, p, rows, avatars)
+    _draw_rows(card, p, rows, avatars)
+    p.flush(card)
+
+    canvas = st.bg.copy()                       # nền + bục đã ghép sẵn
+    _draw_right_top3(canvas, st, rows, avatars)
+    canvas.paste(card, (0, 0), st.mask)         # đặt bảng lên, mép phải mờ vào nền
+    return _encode(canvas.convert("RGB"))
 
 
 # ----------------------------------------------------------------------
@@ -621,10 +637,11 @@ def query_active_by_coin(days, limit):
 
 
 # ----------------------------------------------------------------------
-# TẢI AVATAR (size 512 để nét, cache 1 giờ)
+# TẢI AVATAR (size 256 là đủ nét cho ảnh gửi đi; cache có giới hạn)
 # ----------------------------------------------------------------------
 _avatar_cache = {}
 AVATAR_TTL = 3600
+AVATAR_CACHE_MAX = 40
 
 
 async def fetch_avatars(urls):
@@ -638,10 +655,16 @@ async def fetch_avatars(urls):
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as r:
                 data = await r.read()
                 _avatar_cache[url] = (time.time(), data)
+                if len(_avatar_cache) > AVATAR_CACHE_MAX:
+                    oldest = min(_avatar_cache, key=lambda k: _avatar_cache[k][0])
+                    _avatar_cache.pop(oldest, None)
                 return url, data
         except Exception:
             return url, None
 
+    need = [u for u in urls if not (_avatar_cache.get(u) and time.time() - _avatar_cache[u][0] < AVATAR_TTL)]
+    if not need:
+        return {u: _avatar_cache[u][1] for u in urls}
     async with aiohttp.ClientSession() as s:
         res = await asyncio.gather(*(one(s, u) for u in urls))
     return dict(res)
@@ -708,15 +731,20 @@ class TopView(discord.ui.View):
 # ----------------------------------------------------------------------
 # COG
 # ----------------------------------------------------------------------
+_user_cache = {}          # uid -> (time, name, avatar_url, fallback)  (chỉ cho người ngoài server)
+USER_TTL = 600
+USER_CACHE_MAX = 200
+
+
 class TopCog(commands.Cog):
     FRESH = 120       # giây: mỗi bảng tối đa 1 lần vẽ lại / 2 phút (chỉ khi có người gọi)
     MAX_STALE = 900   # giây: cũ hơn nữa thì buộc phải chờ dựng mới
+    CACHE_MAX = 12    # số bảng tối đa giữ trong RAM
 
     def __init__(self, bot):
         self.bot = bot
         self._png_cache = {}      # (tab, guild_id) -> (time, bytes, sig)
         self._refreshing = set()
-        self._used = {}
         self._prewarmed = False
         self._ok = False
         self._render_sem = asyncio.Semaphore(1)   # mỗi lúc chỉ vẽ 1 ảnh, không dồn CPU
@@ -724,7 +752,7 @@ class TopCog(commands.Cog):
     async def cog_load(self):
         ensure_activity_table()
         try:
-            await asyncio.to_thread(_base)      # nạp sẵn nền 1 lần lúc khởi động
+            await asyncio.to_thread(_static)    # ghép sẵn phần tĩnh 1 lần lúc khởi động
         except Exception as e:
             print(f"[Top] ⚠️ Chưa dựng được bảng xếp hạng ảnh: {e}")
             return
@@ -742,7 +770,6 @@ class TopCog(commands.Cog):
         for guild in list(self.bot.guilds)[:3]:
             try:
                 await self._build(("server", guild.id), "server", guild)
-                self._used[("server", guild.id)] = time.time()
             except Exception as e:
                 print(f"[Top] lỗi dựng sẵn server {guild.id}: {e}")
             await asyncio.sleep(3)
@@ -757,17 +784,32 @@ class TopCog(commands.Cog):
     async def _resolve(self, uid, guild):
         uid = int(uid)
         member = guild.get_member(uid) if guild else None
+        if member is None:
+            hit = _user_cache.get(uid)
+            if hit and time.time() - hit[0] < USER_TTL:
+                return hit[1], hit[2], hit[3]
         user = member or self.bot.get_user(uid)
         if user is None:
             try:
                 user = await self.bot.fetch_user(uid)
             except Exception:
-                return "Người chơi ẩn", None, "Người chơi ẩn"
+                res = ("Người chơi ẩn", None, "Người chơi ẩn")
+                self._remember(uid, res)
+                return res
         try:
-            url = user.display_avatar.replace(size=512, format="png").url
+            url = user.display_avatar.replace(size=256, format="png").url
         except Exception:
             url = str(user.display_avatar.url)
-        return user.display_name, url, user.name
+        res = (user.display_name, url, user.name)
+        if member is None:
+            self._remember(uid, res)
+        return res
+
+    @staticmethod
+    def _remember(uid, res):
+        if len(_user_cache) >= USER_CACHE_MAX:
+            _user_cache.clear()
+        _user_cache[uid] = (time.time(),) + res
 
     async def _get_rows(self, tab, guild):
         if tab == "server" and guild is not None:
@@ -799,7 +841,7 @@ class TopCog(commands.Cog):
         async with self._render_sem:
             png = await asyncio.to_thread(render_board, rows, tab, avatars)
         self._png_cache[key] = (time.time(), png, sig)
-        if len(self._png_cache) > 40:           # giữ cache gọn
+        while len(self._png_cache) > self.CACHE_MAX:     # giữ cache gọn
             oldest = min(self._png_cache, key=lambda k: self._png_cache[k][0])
             self._png_cache.pop(oldest, None)
         return png
@@ -812,11 +854,23 @@ class TopCog(commands.Cog):
         finally:
             self._refreshing.discard(key)
 
+    async def _warm_tabs(self):
+        """Dựng sẵn Tuần/Tháng ở nền để bấm nút là ra ngay (bỏ qua nếu còn mới)."""
+        for tab in ("week", "month"):
+            key = (tab, 0)
+            hit = self._png_cache.get(key)
+            if hit and time.time() - hit[0] < self.FRESH:
+                continue
+            try:
+                await self._build(key, tab, None)
+            except Exception as e:
+                print(f"[Top] lỗi dựng sẵn {tab}: {e}")
+            await asyncio.sleep(1)
+
     async def make_png(self, tab, guild):
         key = (tab, guild.id if (tab == "server" and guild) else 0)
         hit = self._png_cache.get(key)
         now = time.time()
-        self._used[key] = now
         if hit:
             if now - hit[0] > self.FRESH and key not in self._refreshing:
                 self._refreshing.add(key)
@@ -840,6 +894,7 @@ class TopCog(commands.Cog):
             return await ctx.send(f"❌ Chưa dựng được bảng xếp hạng: `{e}`", delete_after=10)
         view = TopView(self, ctx.author.id, ctx.guild)
         view.message = await ctx.send(file=discord.File(io.BytesIO(png), OUT_NAME), view=view)
+        asyncio.create_task(self._warm_tabs())
 
 
 async def setup(bot):
@@ -854,10 +909,10 @@ if __name__ == "__main__":
 
     def _fake_avatar(seed):
         rnd = random.Random(seed)
-        im = Image.new("RGB", (512, 512), tuple(rnd.randint(40, 220) for _ in range(3)))
+        im = Image.new("RGB", (256, 256), tuple(rnd.randint(40, 220) for _ in range(3)))
         dr = ImageDraw.Draw(im)
-        dr.ellipse((170, 90, 342, 262), fill=(255, 255, 255))
-        dr.ellipse((90, 290, 422, 620), fill=(255, 255, 255))
+        dr.ellipse((85, 45, 171, 131), fill=(255, 255, 255))
+        dr.ellipse((45, 145, 211, 310), fill=(255, 255, 255))
         b = io.BytesIO()
         im.save(b, "PNG")
         return b.getvalue()
@@ -868,7 +923,8 @@ if __name__ == "__main__":
     rows = [{"name": n, "coin": c, "avatar_url": f"u{i}"} for i, (n, c) in enumerate(zip(names, coins))]
     av = {f"u{i}": _fake_avatar(i) for i in range(7)}
     for t in ("server", "week", "month"):
+        t0 = time.time()
         data = render_board(rows, t, av)
         fn = f"top_preview_{t}.{OUT_NAME.split('.')[-1]}"
         Path(fn).write_bytes(data)
-        print("đã tạo", fn)
+        print(f"đã tạo {fn}  ({(time.time() - t0) * 1000:.0f} ms, {len(data) // 1024} KB)")
