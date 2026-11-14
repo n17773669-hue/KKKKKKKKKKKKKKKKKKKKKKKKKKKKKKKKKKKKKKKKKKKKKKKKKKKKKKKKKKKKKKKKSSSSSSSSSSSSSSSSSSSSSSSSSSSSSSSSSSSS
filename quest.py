@@ -76,7 +76,6 @@ dashboard_messages: Dict[int, discord.Message] = {}
 # HỆ THỐNG THIẾT BỊ PHỔ BIẾN ĐA DẠNG (ANTI-FINGERPRINT)
 # ==============================================================================
 DEVICE_PROFILES = [
-    DEVICE_PROFILES = [
     # 1. Windows 11 Desktop Client (Bản mới nhất)
     {
         "os": "Windows", "os_version": "10.0.26100", "os_arch": "x64", "app_arch": "x64",
