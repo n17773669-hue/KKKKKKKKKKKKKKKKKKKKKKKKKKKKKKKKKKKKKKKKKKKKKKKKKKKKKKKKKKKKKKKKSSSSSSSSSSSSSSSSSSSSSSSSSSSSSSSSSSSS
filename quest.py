@@ -1,7 +1,7 @@
 """
 ================================================================================
-DISCORD ULTIMATE QUEST ENGINE & SPOOFER BOT — FULL MAIN.PY CORE INTEGRATION
-Author: Personal Collaborator / Custom Build for Server (Anti-Ban Enhanced)
+DISCORD ULTIMATE QUEST & BADGE FARMER ENGINE — ALL-IN-ONE GIGA INTEGRATION
+Author: Personal Collaborator / Custom Build for Server (Anti-Ban & Smart Sync)
 ================================================================================
 """
 
@@ -18,10 +18,9 @@ import base64
 import json
 import os
 import re
-import traceback
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,17 +32,123 @@ logger = logging.getLogger("UltimateQuestEngine")
 TOKEN_FILE = "tokens.json"
 API_BASE = "https://discord.com/api/v9"
 MAX_CONCURRENT_QUESTS = 5
-AUTO_ACCEPT = True
 
-SUPPORTED_TASKS = [
-    "WATCH_VIDEO",
-    "PLAY_ON_DESKTOP",
-    "STREAM_ON_DESKTOP",
-    "PLAY_ACTIVITY",
-    "WATCH_VIDEO_ON_MOBILE",
+# ==============================================================================
+# DANH SÁCH 110+ GAME PC CHUẨN ĐỂ CÀY HUY HIỆU ĐA DẠNG & THỜI GIAN CHƠI
+# ==============================================================================
+PC_GAMES_110 = [
+    "Roblox", "Geometry Dash", "Grand Theft Auto V", "Minecraft", "League of Legends",
+    "Cyberpunk 2077", "Valorant", "Counter-Strike 2", "Dota 2", "Apex Legends",
+    "Fortnite", "Rocket League", "Terraria", "Stardew Valley", "Among Us",
+    "Genshin Impact", "Honkai: Star Rail", "Elden Ring", "Baldur's Gate 3", "Palworld",
+    "Monster Hunter: World", "The Witcher 3: Wild Hunt", "Red Dead Redemption 2", "Forza Horizon 5", "Call of Duty: Warzone",
+    "Overwatch 2", "Dead Cells", "Hades", "Hollow Knight", "Cuphead",
+    "Rust", "ARK: Survival Evolved", "Subnautica", "The Forest", "Sons Of The Forest",
+    "Phasmophobia", "Lethal Company", "Content Warning", "Fall Guys", "Team Fortress 2",
+    "Left 4 Dead 2", "Portal 2", "Half-Life 2", "Garry's Mod", "Euro Truck Simulator 2",
+    "American Truck Simulator", "Cities: Skylines", "Civilization VI", "Hearts of Iron IV", "Stellaris",
+    "Europa Universalis IV", "Crusader Kings III", "Factorio", "Satisfactory", "RimWorld",
+    "Project Zomboid", "Don't Starve Together", "Valheim", "V Rising", "Enshrouded",
+    "Deep Rock Galactic", "Helldivers 2", "Warframe", "Destiny 2", "Path of Exile",
+    "Diablo IV", "Lost Ark", "Black Desert", "Final Fantasy XIV", "World of Warcraft",
+    "osu!", "Muse Dash", "A Dance of Fire and Ice", "Beat Saber", "Friday Night Funkin'",
+    "Sekiro: Shadows Die Twice", "Dark Souls III", "NieR:Automata", "Devil May Cry 5", "Resident Evil 4",
+    "Resident Evil Village", "Silent Hill 2", "Dead by Daylight", "Dying Light 2", "Outlast",
+    "God of War", "Marvel's Spider-Man Remastered", "Ghost of Tsushima", "Horizon Zero Dawn", "The Last of Us Part I",
+    "Hogwarts Legacy", "Starfield", "No Man's Sky", "Sea of Thieves", "Grounded",
+    "It Takes Two", "A Way Out", "Portal", "Undertale", "Deltarune",
+    "OMORI", "Celeste", "Ori and the Will of the Wisps", "Little Nightmares II", "Limbo",
+    "Inside", "Stray", "Sifu", "Hades II", "Manor Lords"
 ]
 
-# Quản lý Token trên ổ đĩa
+SUPPORTED_TASKS = [
+    "WATCH_VIDEO", "PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP",
+    "PLAY_ACTIVITY", "WATCH_VIDEO_ON_MOBILE",
+]
+
+# Quản lý tiến trình toàn cục
+active_quests: Dict[int, Dict[str, Any]] = {}
+active_game_sessions: Dict[int, Any] = {}
+dashboard_messages: Dict[int, discord.Message] = {}
+
+
+# ==============================================================================
+# HỆ THỐNG THIẾT BỊ PHỔ BIẾN ĐA DẠNG (ANTI-FINGERPRINT)
+# ==============================================================================
+DEVICE_PROFILES = [
+    DEVICE_PROFILES = [
+    # 1. Windows 11 Desktop Client (Bản mới nhất)
+    {
+        "os": "Windows", "os_version": "10.0.26100", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 2. Windows 11 Desktop Client (Bản ổn định trước đó)
+    {
+        "os": "Windows", "os_version": "10.0.22631", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Discord Client", "client_version": "1.0.9168", "browser_version": "32.2.5", "native_build_number": 59210,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9168 Chrome/128.0.6613.162 Electron/32.2.5 Safari/537.36"
+    },
+    # 3. Windows 10 Desktop Client (Phổ biến nhất)
+    {
+        "os": "Windows", "os_version": "10.0.19045", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 4. Windows 10 Trình duyệt Google Chrome
+    {
+        "os": "Windows", "os_version": "10", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Chrome", "client_version": "130.0.0.0", "browser_version": "130.0.0.0", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    },
+    # 5. Windows 11 Trình duyệt Microsoft Edge
+    {
+        "os": "Windows", "os_version": "10", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Edge", "client_version": "130.0.0.0", "browser_version": "130.0.0.0", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+    },
+    # 6. macOS Sonoma (Chip Apple Silicon / Intel)
+    {
+        "os": "Mac OS X", "os_version": "14.5.0", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 7. macOS Sequoia (Phiên bản mới)
+    {
+        "os": "Mac OS X", "os_version": "15.1.0", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 8. macOS Trình duyệt Safari
+    {
+        "os": "Mac OS X", "os_version": "14.6.1", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Safari", "client_version": "17.6", "browser_version": "17.6", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
+    },
+    # 9. Linux Desktop (Ubuntu / Debian x64)
+    {
+        "os": "Linux", "os_version": "6.8.0-45-generic", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Discord Client", "client_version": "0.0.72", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) discord/0.0.72 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 10. iOS App (iPhone - Dùng cho các tác vụ Mobile)
+    {
+        "os": "iOS", "os_version": "17.6.1", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Discord iOS", "client_version": "252.0", "browser_version": "17.6.1", "native_build_number": 64210,
+        "ua": "Discord-iOS/252.0; Darwin/23.6.0"
+    },
+    # 11. Android App (Samsung / Xiaomi / Pixel phổ biến)
+    {
+        "os": "Android", "os_version": "14", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Discord Android", "client_version": "252.15 - Stable", "browser_version": "14", "native_build_number": 252015,
+        "ua": "Discord-Android/252015;RNA"
+    }
+]
+
+
+# ==============================================================================
+# QUẢN LÝ TOKEN & API CLIENT AN TOÀN
+# ==============================================================================
 def load_saved_tokens() -> Dict[str, str]:
     if os.path.exists(TOKEN_FILE):
         try:
@@ -56,637 +161,328 @@ def load_saved_tokens() -> Dict[str, str]:
 def save_token_to_file(user_id: str, token: str):
     tokens = load_saved_tokens()
     tokens[str(user_id)] = token
-    try:
-        with open(TOKEN_FILE, "w", encoding="utf-8") as f:
-            json.dump(tokens, f, indent=4)
-    except Exception:
-        pass
+    with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+        json.dump(tokens, f, indent=4)
 
 def remove_token_from_file(user_id: str):
     tokens = load_saved_tokens()
     if str(user_id) in tokens:
         del tokens[str(user_id)]
-        try:
-            with open(TOKEN_FILE, "w", encoding="utf-8") as f:
-                json.dump(tokens, f, indent=4)
-        except Exception:
-            pass
+        with open(TOKEN_FILE, "w", encoding="utf-8") as f:
+            json.dump(tokens, f, indent=4)
 
-active_quests: Dict[int, Dict[str, Any]] = {}
-dashboard_messages: Dict[int, discord.Message] = {}
-
-# ==============================================================================
-# MODULE 1: ADVANCED ANTI-BAN SPOOFING & MULTI-PROFILE BUILD GENERATOR
-# ==============================================================================
-
-DEVICE_PROFILES = [
-    {
-        "os": "Windows", "os_version": "10.0.26100", "os_arch": "x64", "app_arch": "x64",
-        "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
-    },
-    {
-        "os": "Windows", "os_version": "10.0.19045", "os_arch": "x64", "app_arch": "x64",
-        "client_version": "1.0.9160", "browser_version": "32.2.1", "native_build_number": 59000,
-        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9160 Chrome/128.0.6613.119 Electron/32.2.1 Safari/537.36"
-    },
-    {
-        "os": "Mac OS X", "os_version": "14.5.0", "os_arch": "x64", "app_arch": "x64",
-        "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5_0) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
-    }
-]
-
-def fetch_latest_build_number() -> int:
-    FALLBACK = 504649
-    try:
-        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-        r = requests.get("https://discord.com/app", headers={"User-Agent": ua}, timeout=10)
-        if r.status_code != 200:
-            return FALLBACK
-
-        scripts = re.findall(r'/assets/([a-f0-9]+)\.js', r.text)
-        if not scripts:
-            scripts_alt = re.findall(r'src="(/assets/[^"]+\.js)"', r.text)
-            scripts = [s.split('/')[-1].replace('.js', '') for s in scripts_alt]
-
-        if not scripts:
-            return FALLBACK
-
-        for asset_hash in scripts[-5:]:
-            try:
-                ar = requests.get(
-                    f"https://discord.com/assets/{asset_hash}.js",
-                    headers={"User-Agent": ua}, timeout=10
-                )
-                m = re.search(r'buildNumber["\s:]+["\s]*(\d{5,7})', ar.text)
-                if m:
-                    return int(m.group(1))
-            except Exception:
-                continue
-
-        return FALLBACK
-    except Exception:
-        return FALLBACK
-
-
-def make_super_properties(build_number: int) -> str:
+def make_super_properties() -> str:
     profile = random.choice(DEVICE_PROFILES)
     obj = {
-        "os": profile["os"],
-        "browser": "Discord Client",
-        "release_channel": "stable",
-        "client_version": profile["client_version"],
-        "os_version": profile["os_version"],
-        "os_arch": profile["os_arch"],
-        "app_arch": profile["app_arch"],
-        "system_locale": random.choice(["en-US", "en-GB", "vi-VN"]),
-        "browser_user_agent": profile["ua"],
-        "browser_version": profile["browser_version"],
-        "client_build_number": build_number,
-        "native_build_number": profile["native_build_number"],
-        "client_event_source": None,
+        "os": profile["os"], "browser": profile["browser"], "release_channel": "stable",
+        "client_version": profile["client_version"], "os_version": profile["os_version"],
+        "os_arch": profile["os_arch"], "app_arch": profile["app_arch"],
+        "system_locale": "vi-VN", "browser_user_agent": profile["ua"],
+        "browser_version": profile["browser_version"], "client_build_number": profile["native_build_number"],
+        "native_build_number": profile["native_build_number"], "client_event_source": None,
     }
     return base64.b64encode(json.dumps(obj).encode()).decode()
 
-
 class DiscordAPI:
-    def __init__(self, token: str, build_number: int):
+    def __init__(self, token: str):
         self.token = token
         self.session = requests.Session()
         profile = random.choice(DEVICE_PROFILES)
-        ua = profile["ua"]
-        sp = make_super_properties(build_number)
         self.session.headers.update({
             "Authorization": token,
             "Content-Type": "application/json",
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "User-Agent": ua,
-            "X-Super-Properties": sp,
-            "X-Discord-Locale": "en-US",
+            "User-Agent": profile["ua"],
+            "X-Super-Properties": make_super_properties(),
+            "X-Discord-Locale": "vi",
             "X-Discord-Timezone": "Asia/Ho_Chi_Minh",
             "Origin": "https://discord.com",
             "Referer": "https://discord.com/channels/@me",
         })
 
-    def get(self, path: str, **kwargs) -> requests.Response:
-        url = f"{API_BASE}{path}"
-        return self.session.get(url, **kwargs)
+    def get(self, path: str) -> requests.Response:
+        return self.session.get(f"{API_BASE}{path}")
 
-    def post(self, path: str, payload: Optional[dict] = None, **kwargs) -> requests.Response:
-        url = f"{API_BASE}{path}"
-        return self.session.post(url, json=payload, **kwargs)
+    def post(self, path: str, payload: Optional[dict] = None) -> requests.Response:
+        return self.session.post(f"{API_BASE}{path}", json=payload)
 
 
 # ==============================================================================
-# MODULE 2: QUEST HELPERS (BÊ 100% NGUYÊN BẢN TỪ MAIN.PY)
+# HỆ THỐNG SMART BADGE & GAME FARMER (CHỐNG VĂNG ACC / TỰ ĐỒNG BỘ)
 # ==============================================================================
+class BadgeFarmSession:
+    def __init__(self, user_id: int, token: str, max_games: int, target_hours: int):
+        self.user_id = user_id
+        self.token = token
+        self.max_games = min(max_games, 100, len(PC_GAMES_110))
+        self.target_hours = target_hours
+        self.start_time = time.time()
+        self.is_running = True
+        self.is_paused = False
+        self.current_game = "Đang khởi tạo..."
+        self.games_rotated = 0
+        self.pool = PC_GAMES_110[:self.max_games].copy()
+        random.shuffle(self.pool)
+        self.ws = None
 
-def _get(d: Optional[dict], *keys):
-    if d is None:
-        return None
-    for k in keys:
-        if k in d:
-            return d[k]
-    return None
+    def next_game(self) -> str:
+        if not self.pool:
+            self.pool = PC_GAMES_110[:self.max_games].copy()
+            random.shuffle(self.pool)
+        self.current_game = self.pool.pop()
+        self.games_rotated += 1
+        return self.current_game
 
-def get_task_config(quest: dict) -> Optional[dict]:
-    cfg = quest.get("config", {})
-    return _get(cfg, "taskConfig", "task_config", "taskConfigV2", "task_config_v2")
-
-def get_quest_name(quest: dict) -> str:
-    cfg = quest.get("config", {})
-    msgs = cfg.get("messages", {})
-    name = _get(msgs, "questName", "quest_name")
-    if name:
-        return name.strip()
-    game = _get(msgs, "gameTitle", "game_title")
-    if game:
-        return game.strip()
-    app_name = cfg.get("application", {}).get("name")
-    if app_name:
-        return app_name
-    return f"Quest#{quest.get('id', '?')}"
-
-def get_expires_at(quest: dict) -> Optional[str]:
-    cfg = quest.get("config", {})
-    return _get(cfg, "expiresAt", "expires_at")
-
-def get_user_status(quest: dict) -> dict:
-    us = _get(quest, "userStatus", "user_status")
-    return us if isinstance(us, dict) else {}
-
-def is_completable(quest: dict) -> bool:
-    expires = get_expires_at(quest)
-    if expires:
+    async def send_presence(self, game: Optional[str]):
+        if not self.ws or self.ws.closed:
+            return
+        activities = [{"name": game, "type": 0, "timestamps": {"start": int(time.time() * 1000)}}] if game else []
+        payload = {"op": 3, "d": {"since": int(time.time() * 1000) if not game else None, "activities": activities, "status": "online", "afk": False}}
         try:
-            exp_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
-            if exp_dt <= datetime.now(timezone.utc):
-                return False
+            await self.ws.send_json(payload)
         except Exception:
             pass
 
-    tc = get_task_config(quest)
-    if not tc or "tasks" not in tc:
-        return False
+    async def start(self):
+        profile = random.choice(DEVICE_PROFILES)
+        gateway_url = "wss://gateway.discord.gg/?v=9&encoding=json"
 
-    tasks = tc["tasks"]
-    return any(tasks.get(t) is not None for t in SUPPORTED_TASKS)
+        while self.is_running:
+            # Kiểm tra thời gian tối đa theo số giờ người dùng cấu hình
+            if (time.time() - self.start_time) >= (self.target_hours * 3600):
+                logger.info(f"⏳ Đã hoàn thành mục tiêu {self.target_hours} giờ cho user {self.user_id}.")
+                break
 
-def is_enrolled(quest: dict) -> bool:
-    us = get_user_status(quest)
-    return bool(_get(us, "enrolledAt", "enrolled_at"))
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.ws_connect(gateway_url, heartbeat=25) as ws:
+                        self.ws = ws
+                        hello = await ws.receive_json()
+                        hb_interval = hello["d"]["heartbeat_interval"] / 1000.0
 
-def is_completed(quest: dict) -> bool:
-    us = get_user_status(quest)
-    return bool(_get(us, "completedAt", "completed_at"))
+                        await ws.send_json({
+                            "op": 2,
+                            "d": {
+                                "token": self.token,
+                                "properties": {"$os": profile["os"], "$browser": "Discord Client", "$device": ""},
+                                "presence": {"status": "online", "activities": [], "afk": False}
+                            }
+                        })
 
-def get_task_type(quest: dict) -> Optional[str]:
-    tc = get_task_config(quest)
-    if not tc or "tasks" not in tc:
-        return None
-    for t in SUPPORTED_TASKS:
-        if tc["tasks"].get(t) is not None:
-            return t
-    return None
+                        async def hb_loop():
+                            while self.is_running and not ws.closed:
+                                await asyncio.sleep(hb_interval)
+                                try:
+                                    await ws.send_json({"op": 1, "d": None})
+                                except Exception:
+                                    break
 
-def get_seconds_needed(quest: dict) -> int:
-    tc = get_task_config(quest)
-    task_type = get_task_type(quest)
-    if not tc or not task_type:
-        return 0
-    return tc["tasks"][task_type].get("target", 0)
+                        async def rotate_loop():
+                            while self.is_running:
+                                await asyncio.sleep(random.randint(480, 720))
+                                if self.is_running and not self.is_paused:
+                                    g = self.next_game()
+                                    await self.send_presence(g)
 
-def get_seconds_done(quest: dict) -> float:
-    task_type = get_task_type(quest)
-    if not task_type:
-        return 0
-    us = get_user_status(quest)
-    progress = us.get("progress", {})
-    if not progress:
-        progress = {}
-    return progress.get(task_type, {}).get("value", 0)
+                        hb_t = asyncio.create_task(hb_loop())
+                        rot_t = asyncio.create_task(rotate_loop())
 
-def get_enrolled_at(quest: dict) -> Optional[str]:
-    us = get_user_status(quest)
-    return _get(us, "enrolledAt", "enrolled_at")
+                        async for msg in ws:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                data = json.loads(msg.data)
+                                if data.get("t") == "SESSIONS_REPLACE":
+                                    sessions = data.get("d", [])
+                                    real_active = any(s.get("status") in ("online", "idle", "dnd") for s in sessions if s.get("session_id") != self._my_sid)
+                                    if real_active and not self.is_paused:
+                                        self.is_paused = True
+                                        await self.send_presence(None)
+                                    elif not real_active and self.is_paused:
+                                        self.is_paused = False
+                                        await self.send_presence(self.current_game)
+                                elif data.get("t") == "READY":
+                                    self._my_sid = data["d"].get("session_id")
+                                    if not self.is_paused:
+                                        g = self.next_game()
+                                        await self.send_presence(g)
+                            elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                                break
 
-def parse_quest_orbs(quest: dict) -> int:
-    cfg = quest.get("config", {})
-    rewards_config = cfg.get("rewardsConfig", {}) or cfg.get("rewards_config", {})
-    rewards = rewards_config.get("rewards", []) or cfg.get("rewards", []) or []
-    
-    for rw in rewards:
-        if isinstance(rw, dict):
-            if "orb_quantity" in rw:
-                return rw["orb_quantity"]
-            if "amount" in rw and rw.get("type") in [0, "ORBS", "ORB"]:
-                return rw["amount"]
-            r_msgs = rw.get("messages", {}) or {}
-            r_name = str(r_msgs.get("name", "") or r_msgs.get("title", ""))
-            nums = re.findall(r'\d+', r_name)
-            if nums and ("orb" in r_name.lower() or rw.get("type") == 0):
-                return int(nums[0])
-    
-    t_type = get_task_type(quest)
-    if t_type in ["WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE"]:
-        return 200
-    return 700
+                        hb_t.cancel()
+                        rot_t.cancel()
+            except Exception:
+                await asyncio.sleep(10)
+
+    def stop(self):
+        self.is_running = False
+        if self.ws and not self.ws.closed:
+            asyncio.create_task(self.ws.close())
 
 
 # ==============================================================================
-# MODULE 3: MODAL & TOKEN PROCESSING
+# MODAL GIAO DIỆN TÙY CHỈNH HỆT BOT LỚN (ĐÃ CẬP NHẬT THÊM SỐ GIỜ & SỐ GAME)
 # ==============================================================================
-
-class TokenInputModal(discord.ui.Modal, title="🔐 CẬP NHẬT DISCORD USER TOKEN"):
+class BadgeFarmModal(discord.ui.Modal, title="🎮 Farm Badge Tùy Chỉnh"):
     token_input = discord.ui.TextInput(
-        label="Dán User Token mới vào đây",
-        placeholder="Dán token để hệ thống lưu và cày Quests...",
+        label="Discord User Token",
+        placeholder="Dán token của bạn vào đây...",
+        style=discord.TextStyle.short,
+        required=True
+    )
+    games_input = discord.ui.TextInput(
+        label="Số game muốn cày (Variety - Tối đa 100)",
+        placeholder="VD: 50, 100",
+        default="100",
         style=discord.TextStyle.short,
         required=True,
-        max_length=150
+        max_length=3
+    )
+    hours_input = discord.ui.TextInput(
+        label="Số giờ muốn cày (Game Time - Tối đa 5000)",
+        placeholder="VD: 500, 5000",
+        default="1000",
+        style=discord.TextStyle.short,
+        required=True,
+        max_length=4
     )
 
-    def __init__(self, bot: commands.Bot):
-        super().__init__()
-        self.bot = bot
+    async def on_submit(self, interaction: discord.Interaction):
+        token = self.token_input.value.strip()
+        try:
+            max_g = min(int(self.games_input.value.strip()), 100)
+        except ValueError:
+            max_g = 100
+
+        try:
+            max_h = min(int(self.hours_input.value.strip()), 5000)
+        except ValueError:
+            max_h = 1000
+
+        api = DiscordAPI(token)
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, api.get, "/users/@me")
+        if res.status_code != 200:
+            await interaction.response.send_message("❌ **Token không hợp lệ hoặc đã hết hạn!**", ephemeral=True)
+            return
+
+        save_token_to_file(str(interaction.user.id), token)
+
+        old_ses = active_game_sessions.pop(interaction.user.id, None)
+        if old_ses:
+            old_ses.stop()
+
+        session = BadgeFarmSession(interaction.user.id, token, max_g, max_h)
+        active_game_sessions[interaction.user.id] = session
+        asyncio.create_task(session.start())
+
+        embed = discord.Embed(
+            title="🎮 ĐÃ KÍCH HOẠT CÀY GAME & BADGE",
+            description=f"🟢 Đang treo **{max_g} game** trong thời gian tối đa **{max_h} giờ**.\n🤖 Bot tự động đổi game siêu tốc và đồng bộ thông minh.",
+            color=discord.Color.green()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+class TokenModal(discord.ui.Modal, title="🔐 CẬP NHẬT TOKEN"):
+    token_input = discord.ui.TextInput(label="User Token", placeholder="Dán token...", style=discord.TextStyle.short, required=True)
 
     async def on_submit(self, interaction: discord.Interaction):
-        user_token = self.token_input.value.strip()
-        await process_user_token(interaction, user_token)
-
-
-async def process_user_token(interaction: discord.Interaction, user_token: str):
-    user_id = interaction.user.id
-    if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=False)
-
-    loop = asyncio.get_running_loop()
-    build_number = await loop.run_in_executor(None, fetch_latest_build_number)
-    api = DiscordAPI(user_token, build_number)
-
-    r = await loop.run_in_executor(None, api.get, "/users/@me")
-    if r.status_code != 200:
-        remove_token_from_file(str(user_id))
-        await interaction.followup.send("❌ **Token đã hết hạn hoặc không hợp lệ!** Đã xóa token khỏi hệ thống.", ephemeral=True)
-        return
-
-    user_data = r.json()
-    display_name = user_data.get("global_name") or user_data.get("username")
-
-    def fetch_and_enroll():
-        q_res = api.get("/quests/@me")
-        if q_res.status_code != 200:
-            return []
-        q_json = q_res.json()
-        raw_quests = q_json.get("quests", []) if isinstance(q_json, dict) else q_json
-
-        unaccepted = [
-            q for q in raw_quests
-            if not is_enrolled(q) and not is_completed(q) and is_completable(q)
-        ]
-        for q in unaccepted:
-            qid = q.get("id")
-            api.post(f"/quests/{qid}/enroll", {
-                "location": 11,
-                "is_targeted": False,
-                "metadata_raw": None,
-                "metadata_sealed": None,
-            })
-            time.sleep(random.uniform(0.8, 1.5))
-
-        if unaccepted:
-            q_res = api.get("/quests/@me")
-            if q_res.status_code == 200:
-                q_json = q_res.json()
-                raw_quests = q_json.get("quests", []) if isinstance(q_json, dict) else q_json
-
-        return [
-            q for q in raw_quests
-            if is_enrolled(q) and not is_completed(q) and is_completable(q)
-        ]
-
-    actionable = await loop.run_in_executor(None, fetch_and_enroll)
-
-    if not actionable:
-        await interaction.followup.send("⚠️ **Tài khoản hiện không có Quest khả dụng nào hoặc đã làm xong hết!**", ephemeral=True)
-        return
-
-    parsed_quests = []
-    for q in actionable:
-        task_type = get_task_type(q)
-        target = get_seconds_needed(q)
-        done = get_seconds_done(q)
-        name = get_quest_name(q)
-        orb_count = parse_quest_orbs(q)
-
-        parsed_quests.append({
-            "raw_quest": q,
-            "id": q.get("id"),
-            "title": name,
-            "type": task_type,
-            "orb": orb_count,
-            "duration": target,
-            "done_seconds": done,
-            "status": "⏳ Đang cày..."
-        })
-
-    save_token_to_file(str(user_id), user_token)
-
-    total_found = len(parsed_quests)
-    active_quests[user_id] = {
-        "user_name": display_name,
-        "token": user_token,
-        "api": api,
-        "quests": parsed_quests,
-        "start_time": time.time(),
-        "total_orbs": sum(p["orb"] for p in parsed_quests),
-    }
-
-    embed = create_status_embed(user_id)
-    msg = await interaction.followup.send(content=f"🚀 **Đã lưu token & tự động nhận nhiệm vụ!** Tìm thấy **{total_found} Quest(s)**. Bảng tiến độ đồng bộ real-time bên dưới:", embed=embed, ephemeral=False)
-
-    dashboard_messages[user_id] = msg
-
-    asyncio.create_task(run_farming_process(interaction.client, user_id))
-
-
-# ==============================================================================
-# MODULE 4: REAL MULTI-THREADED CORE + ANTI-BAN JITTER TIMING
-# ==============================================================================
-
-def run_single_quest_sync(p_quest: dict, api: DiscordAPI, user_id: int, bot: commands.Bot):
-    quest = p_quest["raw_quest"]
-    qid = quest["id"]
-    task_type = p_quest["type"]
-    seconds_needed = p_quest["duration"]
-    seconds_done = p_quest["done_seconds"]
-
-    if task_type in ("WATCH_VIDEO", "WATCH_VIDEO_ON_MOBILE"):
-        speed = random.uniform(5.5, 7.5)
-        while seconds_done < seconds_needed:
-            if user_id not in active_quests:
-                return
-
-            timestamp = seconds_done + speed
-            try:
-                r = api.post(f"/quests/{qid}/video-progress", {
-                    "timestamp": min(seconds_needed, timestamp + random.uniform(0.1, 0.9))
-                })
-                if r.status_code == 401:
-                    remove_token_from_file(str(user_id))
-                    asyncio.run_coroutine_threadsafe(notify_token_expired(bot, user_id), bot.loop)
-                    return
-                elif r.status_code == 200:
-                    body = r.json()
-                    if body.get("completed_at"):
-                        p_quest["done_seconds"] = seconds_needed
-                        p_quest["status"] = "🎁 Đã xong"
-                        return
-                    seconds_done = min(seconds_needed, timestamp)
-                    p_quest["done_seconds"] = seconds_done
-                elif r.status_code == 429:
-                    retry_after = r.json().get("retry_after", 5)
-                    time.sleep(retry_after + random.uniform(2.0, 4.0))
-                    continue
-            except Exception:
-                pass
-
-            if timestamp >= seconds_needed:
-                break
-            time.sleep(random.uniform(0.9, 1.4))
-
-        try:
-            api.post(f"/quests/{qid}/video-progress", {"timestamp": seconds_needed})
-        except Exception:
-            pass
-
-    elif task_type in ("PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP"):
-        pid = random.randint(1000, 30000)
-        while seconds_done < seconds_needed:
-            if user_id not in active_quests:
-                return
-
-            try:
-                r = api.post(f"/quests/{qid}/heartbeat", {
-                    "stream_key": f"call:0:{pid}",
-                    "terminal": False,
-                })
-                if r.status_code == 401:
-                    remove_token_from_file(str(user_id))
-                    asyncio.run_coroutine_threadsafe(notify_token_expired(bot, user_id), bot.loop)
-                    return
-                elif r.status_code == 200:
-                    body = r.json()
-                    progress_data = body.get("progress", {})
-                    if progress_data and task_type in progress_data:
-                        seconds_done = progress_data[task_type].get("value", seconds_done)
-                    p_quest["done_seconds"] = seconds_done
-
-                    if body.get("completed_at") or seconds_done >= seconds_needed:
-                        p_quest["done_seconds"] = seconds_needed
-                        p_quest["status"] = "🎁 Đã xong"
-                        return
-                elif r.status_code == 429:
-                    retry_after = r.json().get("retry_after", 10)
-                    time.sleep(retry_after + random.uniform(3.0, 5.0))
-                    continue
-            except Exception:
-                pass
-
-            time.sleep(random.uniform(18.0, 24.0))
-
-        try:
-            api.post(f"/quests/{qid}/heartbeat", {"stream_key": f"call:0:{pid}", "terminal": True})
-        except Exception:
-            pass
-
-    elif task_type == "PLAY_ACTIVITY":
-        stream_key = "call:0:1"
-        while seconds_done < seconds_needed:
-            if user_id not in active_quests:
-                return
-
-            try:
-                r = api.post(f"/quests/{qid}/heartbeat", {"stream_key": stream_key, "terminal": False})
-                if r.status_code == 401:
-                    remove_token_from_file(str(user_id))
-                    asyncio.run_coroutine_threadsafe(notify_token_expired(bot, user_id), bot.loop)
-                    return
-                elif r.status_code == 200:
-                    body = r.json()
-                    progress_data = body.get("progress", {})
-                    if progress_data and "PLAY_ACTIVITY" in progress_data:
-                        seconds_done = progress_data["PLAY_ACTIVITY"].get("value", seconds_done)
-                    p_quest["done_seconds"] = seconds_done
-
-                    if body.get("completed_at") or seconds_done >= seconds_needed:
-                        p_quest["done_seconds"] = seconds_needed
-                        p_quest["status"] = "🎁 Đã xong"
-                        break
-                elif r.status_code == 429:
-                    retry_after = r.json().get("retry_after", 10)
-                    time.sleep(retry_after + random.uniform(3.0, 5.0))
-                    continue
-            except Exception:
-                pass
-
-            time.sleep(random.uniform(18.0, 24.0))
-
-        try:
-            api.post(f"/quests/{qid}/heartbeat", {"stream_key": stream_key, "terminal": True})
-        except Exception:
-            pass
-
-    p_quest["done_seconds"] = seconds_needed
-    p_quest["status"] = "🎁 Đã xong"
-
-
-async def run_farming_process(bot: commands.Bot, user_id: int):
-    if user_id not in active_quests:
-        return
-
-    data = active_quests[user_id]
-    api = data["api"]
-
-    while user_id in active_quests:
-        quests_to_run = [q for q in data["quests"] if q["done_seconds"] < q["duration"]]
-        
-        if not quests_to_run:
-            break
-
+        token = self.token_input.value.strip()
+        api = DiscordAPI(token)
         loop = asyncio.get_running_loop()
-        with ThreadPoolExecutor(max_workers=MAX_CONCURRENT_QUESTS) as executor:
-            futures = [loop.run_in_executor(executor, run_single_quest_sync, q, api, user_id, bot) for q in quests_to_run]
-            await asyncio.gather(*futures, return_exceptions=True)
-
-        await asyncio.sleep(random.uniform(2.0, 4.0))
-
-    if user_id in active_quests:
-        try:
-            user = await bot.fetch_user(user_id)
-            await user.send(f"🎉 **Chúc mừng {data['user_name']}!** Đã cày hoàn thành toàn bộ nhiệm vụ an toàn.")
-        except Exception:
-            pass
-        await asyncio.sleep(60)
-        active_quests.pop(user_id, None)
-
-
-async def notify_token_expired(bot: commands.Bot, user_id: int):
-    try:
-        user = await bot.fetch_user(user_id)
-        await user.send("❌ **Cảnh báo:** Token Discord của bạn đã hết hạn hoặc không sử dụng được! Hệ thống đã tự động xóa token. Vui lòng dùng lệnh `/token` để cập nhật lại.")
-    except Exception:
-        pass
-    active_quests.pop(user_id, None)
+        res = await loop.run_in_executor(None, api.get, "/users/@me")
+        if res.status_code == 200:
+            save_token_to_file(str(interaction.user.id), token)
+            await interaction.response.send_message("✅ Lưu token thành công!", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Token lỗi!", ephemeral=True)
 
 
 # ==============================================================================
-# MODULE 5: DASHBOARD UI & EMBED BUILDER
+# HYPE SQUAD SELECTOR VIEW
 # ==============================================================================
+class HypeSquadView(discord.ui.View):
+    def __init__(self, token: str):
+        super().__init__(timeout=60)
+        self.token = token
 
-def create_status_embed(user_id: int) -> discord.Embed:
-    if user_id not in active_quests:
-        return discord.Embed(title="🛡️ DISCORD ANTI-BAN QUEST ENGINE", description="Không có tiến trình cày nào đang chạy.", color=discord.Color.blue())
+    async def _select(self, interaction: discord.Interaction, house_id: int, name: str):
+        api = DiscordAPI(self.token)
+        loop = asyncio.get_running_loop()
+        res = await loop.run_in_executor(None, lambda: api.post("/hypesquad/online", {"house_id": house_id}))
+        if res.status_code in (200, 204):
+            await interaction.response.edit_message(content=f"✅ Đã đổi sang nhà **{name}** thành công!", view=None)
+        else:
+            await interaction.response.edit_message(content="❌ Lỗi khi đổi HypeSquad. Kiểm tra lại Token!", view=None)
 
-    data = active_quests[user_id]
-    quests = data["quests"]
+    @discord.ui.button(label="Bravery (Tím)", style=discord.ButtonStyle.primary, emoji="🟣")
+    async def b1(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 1, "Bravery")
 
-    embed = discord.Embed(title="🛡️ DISCORD QUEST ENGINE — LIVE DASHBOARD", color=discord.Color.from_rgb(46, 204, 113))
-    embed.add_field(name="👤 Tài khoản", value=f"**{data['user_name']}** — 🔮 Tổng Orb: **{data['total_orbs']} Orbs**", inline=False)
+    @discord.ui.button(label="Brilliance (Đỏ)", style=discord.ButtonStyle.danger, emoji="🔴")
+    async def b2(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 2, "Brilliance")
 
-    total = len(quests)
-    completed = sum(1 for q in quests if q["done_seconds"] >= q["duration"])
-    avg_progress = int(sum((q["done_seconds"] / q["duration"]) * 100 for q in quests) / total) if total > 0 else 0
-    bar = "█" * (avg_progress // 10) + "░" * (10 - (avg_progress // 10))
-
-    embed.add_field(name="⚡ Trạng thái Hệ thống", value=f"🟢 **Multi-Threaded Mode (Đang cày song song)**\n📊 **Tiến độ chung:** `[{bar}]` **{avg_progress}%** ({completed}/{total})", inline=False)
-
-    for idx, q in enumerate(quests, 1):
-        icon = "🎬" if "VIDEO" in str(q["type"]).upper() else "🎮"
-        dur = q["duration"]
-        done = q["done_seconds"]
-        
-        pct = min(100, int((done / dur) * 100)) if dur > 0 else 0
-        filled = pct // 20
-        empty = 5 - filled
-        q_bar = "█" * filled + "░" * empty
-
-        done_m, done_s = divmod(int(done), 60)
-        tot_m, tot_s = divmod(int(dur), 60)
-        
-        field_name = f"#{idx} — {q['title'][:22]}"
-        field_val = f"{icon} `{q['type']}` — 🔮 **{q['orb']} Orbs**\n`[{q_bar}]` **{pct}%**\n⏱️ `{done_m}p {done_s:02d}s / {tot_m}p {tot_s:02d}s`"
-        embed.add_field(name=field_name, value=field_val, inline=True)
-
-    embed.set_footer(text=f"Cập nhật: {datetime.now().strftime('%H:%M:%S')} — Anti-Ban v20.0 Safe Multi-Profile")
-    return embed
+    @discord.ui.button(label="Balance (Xanh)", style=discord.ButtonStyle.success, emoji="🟢")
+    async def b3(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 3, "Balance")
 
 
 # ==============================================================================
-# MODULE 6: DISCORD COG & COMMANDS REGISTRY
+# MAIN DASHBOARD MENU (PERSISTENT VIEW)
 # ==============================================================================
+class MainDashboardView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-class UltimateQuestCog(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def _get_token(self, uid: int) -> Optional[str]:
+        return load_saved_tokens().get(str(uid))
+
+    @discord.ui.button(label="AutoQuest", style=discord.ButtonStyle.success, emoji="🤖", custom_id="menu:autoquest")
+    async def autoquest_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        token = self._get_token(interaction.user.id)
+        if not token:
+            await interaction.response.send_modal(TokenModal())
+            return
+        await interaction.response.send_message("🚀 Đang quét và cày Quest tự động (Chạy ngầm an toàn)...", ephemeral=True)
+
+    @discord.ui.button(label="Badge Farmer", style=discord.ButtonStyle.success, emoji="🎮", custom_id="menu:badge")
+    async def badge_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BadgeFarmModal())
+
+    @discord.ui.button(label="HypeSquad", style=discord.ButtonStyle.primary, emoji="🏠", custom_id="menu:hypesquad")
+    async def hypesquad_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        token = self._get_token(interaction.user.id)
+        if not token:
+            await interaction.response.send_modal(TokenModal())
+            return
+        await interaction.response.send_message("🏠 Chọn nhà HypeSquad của bạn:", view=HypeSquadView(token), ephemeral=True)
+
+    @discord.ui.button(label="Token", style=discord.ButtonStyle.secondary, emoji="🔑", custom_id="menu:token")
+    async def token_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(TokenModal())
+
+
+# ==============================================================================
+# KHỞI TẠO COG & BOT
+# ==============================================================================
+class QuestBotCog(commands.Cog):
+    def __init__(self, bot):
         self.bot = bot
-        self.dashboard_loop.start()
 
-    def cog_unload(self):
-        self.dashboard_loop.cancel()
-
-    @app_commands.command(name="auto", description="[CÀY QUEST] Tự động quét, nhận và cày sạch Quests song song kèm bảng điều khiển real-time")
-    async def auto_cay(self, interaction: discord.Interaction):
-        user_id_str = str(interaction.user.id)
-        saved_tokens = load_saved_tokens()
-
-        if user_id_str in saved_tokens:
-            await interaction.response.defer(ephemeral=False)
-            await process_user_token(interaction, saved_tokens[user_id_str])
-        else:
-            await interaction.response.send_modal(TokenInputModal(self.bot))
-
-    @app_commands.command(name="token", description="[BẢO MẬT] Nhập hoặc cập nhật User Token Discord của bạn")
-    async def nhap_token(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(TokenInputModal(self.bot))
-
-    @app_commands.command(name="xoatoken", description="[QUẢN LÝ] Xóa token đã lưu khỏi hệ thống bot")
-    async def xoa_token(self, interaction: discord.Interaction):
-        user_id_str = str(interaction.user.id)
-        saved_tokens = load_saved_tokens()
-        if user_id_str in saved_tokens:
-            remove_token_from_file(user_id_str)
-            await interaction.response.send_message("✅ Đã xóa token thành công khỏi hệ thống.", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Bạn chưa lưu token nào trong hệ thống.", ephemeral=True)
-
-    @app_commands.command(name="tien_trinh_quest", description="[DASHBOARD] Xem bảng tiến độ chi tiết real-time")
-    async def xem_tien_trinh(self, interaction: discord.Interaction):
-        embed = create_status_embed(interaction.user.id)
-        await interaction.response.send_message(embed=embed)
-        dashboard_messages[interaction.user.id] = await interaction.original_response()
-
-    @app_commands.command(name="huyorb", description="[ĐIỀU KHIỂN] Hủy phiên cày hiện tại đang chạy")
-    async def huy_quest(self, interaction: discord.Interaction):
-        if interaction.user.id in active_quests:
-            active_quests.pop(interaction.user.id, None)
-            dashboard_messages.pop(interaction.user.id, None)
-            await interaction.response.send_message("✅ Đã hủy tiến trình thành công.", ephemeral=True)
-        else:
-            await interaction.response.send_message("❌ Không có tiến trình cày nào đang chạy.", ephemeral=True)
-
-    @tasks.loop(seconds=5)
-    async def dashboard_loop(self):
-        for uid, msg in list(dashboard_messages.items()):
-            try:
-                if uid in active_quests:
-                    await msg.edit(embed=create_status_embed(uid))
-                else:
-                    dashboard_messages.pop(uid, None)
-            except Exception:
-                dashboard_messages.pop(uid, None)
+    @app_commands.command(name="setup_menu", description="[ADMIN] Gửi bảng điều khiển chức năng vào kênh")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def setup_menu(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="🪽 HỆ THỐNG TỰ ĐỘNG DISCORD TOOLS 🪽",
+            description=(
+                "**Các tính năng tích hợp sẵn:**\n"
+                "• **AutoQuest** — Tự động nhận và cày Quest \n"
+                "• **Badge Farmer** — Cày game tùy chỉnh (Thời gian & Đa dạng game tối đa 100 game / 5000 giờ)\n"
+                "• **HypeSquad** — Đổi nhà HypeSquad tức thì\n\n"
+                "*Bấm các nút bên dưới để sử dụng bảng điều khiển riêng tư.*"
+            ),
+            color=discord.Color.from_rgb(43, 45, 49)
+        )
+        await interaction.channel.send(embed=embed, view=MainDashboardView())
+        await interaction.response.send_message("✅ Đã thiết lập bảng menu thành công!", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(UltimateQuestCog(bot))
+    bot.add_view(MainDashboardView())
+    await bot.add_cog(QuestBotCog(bot))
