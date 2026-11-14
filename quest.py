@@ -1,6 +1,6 @@
 """
 ================================================================================
-DISCORD ULTIMATE QUEST & BADGE FARMER ENGINE — ALL-IN-ONE GIGA INTEGRATION
+DISCORD ULTIMATE QUEST & BADGE FARMER ENGINE — PREMIUM PRO UI EDITION
 Author: Personal Collaborator / Custom Build for Server (Anti-Ban & Smart Sync)
 ================================================================================
 """
@@ -246,7 +246,6 @@ class BadgeFarmSession:
         gateway_url = "wss://gateway.discord.gg/?v=9&encoding=json"
 
         while self.is_running:
-            # Kiểm tra thời gian tối đa theo số giờ người dùng cấu hình
             if (time.time() - self.start_time) >= (self.target_hours * 3600):
                 logger.info(f"⏳ Đã hoàn thành mục tiêu {self.target_hours} giờ cho user {self.user_id}.")
                 break
@@ -317,7 +316,57 @@ class BadgeFarmSession:
 
 
 # ==============================================================================
-# MODAL GIAO DIỆN TÙY CHỈNH HỆT BOT LỚN (ĐÃ CẬP NHẬT THÊM SỐ GIỜ & SỐ GAME)
+# GIAO DIỆN QUẢN LÝ TIẾN TRÌNH CÀY (CÓ NÚT XEM & NÚT HỦY)
+# ==============================================================================
+class ProgressControlView(discord.ui.View):
+    def __init__(self, user_id: int, session_type: str):
+        super().__init__(timeout=None)
+        self.user_id = user_id
+        self.session_type = session_type # "quest" hoặc "badge"
+
+    @discord.ui.button(label="Xem Tiến Trình", style=discord.ButtonStyle.primary, emoji="📊", custom_id="prog:view")
+    async def view_progress(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.session_type == "quest":
+            embed = create_status_embed(self.user_id)
+            if not embed:
+                await interaction.response.send_message("❌ Không có tiến trình Quest nào đang chạy!", ephemeral=True)
+                return
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        elif self.session_type == "badge":
+            ses: BadgeFarmSession = active_game_sessions.get(self.user_id)
+            if not ses or not ses.is_running:
+                await interaction.response.send_message("❌ Tiến trình cày Game/Badge đã dừng!", ephemeral=True)
+                return
+            elapsed_h = round((time.time() - ses.start_time) / 3600, 2)
+            embed = discord.Embed(
+                title="🎮 TRẠNG THÁI BADGE & GAME FARMER",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Trạng thái", value="⏸️ Đang tạm dừng" if ses.is_paused else "🟢 Đang cày ngầm", inline=False)
+            embed.add_field(name="Game hiện tại", value=f"`{ses.current_game}`", inline=True)
+            embed.add_field(name="Số game đã xoay", value=f"**{ses.games_rotated}** game", inline=True)
+            embed.add_field(name="Thời gian chạy", value=f"⏱️ **{elapsed_h} / {ses.target_hours} giờ**", inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @discord.ui.button(label="Hủy Tiến Trình", style=discord.ButtonStyle.danger, emoji="⏹️", custom_id="prog:stop")
+    async def stop_progress(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.session_type == "quest":
+            if self.user_id in active_quests:
+                active_quests.pop(self.user_id, None)
+                await interaction.response.edit_message(content="🛑 **Đã hủy tiến trình cày Quest thành công!**", embed=None, view=None)
+            else:
+                await interaction.response.send_message("❌ Không tìm thấy tiến trình Quest.", ephemeral=True)
+        elif self.session_type == "badge":
+            ses = active_game_sessions.pop(self.user_id, None)
+            if ses:
+                ses.stop()
+                await interaction.response.edit_message(content="🛑 **Đã dừng hoàn toàn tiến trình cày Game/Badge!**", embed=None, view=None)
+            else:
+                await interaction.response.send_message("❌ Không tìm thấy tiến trình cày game.", ephemeral=True)
+
+
+# ==============================================================================
+# MODAL GIAO DIỆN TÙY CHỈNH HỆT BOT LỚN
 # ==============================================================================
 class BadgeFarmModal(discord.ui.Modal, title="🎮 Farm Badge Tùy Chỉnh"):
     token_input = discord.ui.TextInput(
@@ -359,7 +408,8 @@ class BadgeFarmModal(discord.ui.Modal, title="🎮 Farm Badge Tùy Chỉnh"):
         loop = asyncio.get_running_loop()
         res = await loop.run_in_executor(None, api.get, "/users/@me")
         if res.status_code != 200:
-            await interaction.response.send_message("❌ **Token không hợp lệ hoặc đã hết hạn!**", ephemeral=True)
+            embed = discord.Embed(title="❌ Lỗi Xác Thực", description="Token không hợp lệ hoặc đã hết hạn!", color=discord.Color.red())
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         save_token_to_file(str(interaction.user.id), token)
@@ -377,7 +427,8 @@ class BadgeFarmModal(discord.ui.Modal, title="🎮 Farm Badge Tùy Chỉnh"):
             description=f"🟢 Đang treo **{max_g} game** trong thời gian tối đa **{max_h} giờ**.\n🤖 Bot tự động đổi game siêu tốc và đồng bộ thông minh.",
             color=discord.Color.green()
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        embed.set_footer(text="Bấm nút bên dưới để xem tiến trình hoặc hủy bỏ lệnh cày.")
+        await interaction.response.send_message(embed=embed, view=ProgressControlView(interaction.user.id, "badge"), ephemeral=True)
 
 
 class TokenModal(discord.ui.Modal, title="🔐 CẬP NHẬT TOKEN"):
@@ -390,13 +441,15 @@ class TokenModal(discord.ui.Modal, title="🔐 CẬP NHẬT TOKEN"):
         res = await loop.run_in_executor(None, api.get, "/users/@me")
         if res.status_code == 200:
             save_token_to_file(str(interaction.user.id), token)
-            await interaction.response.send_message("✅ Lưu token thành công!", ephemeral=True)
+            embed = discord.Embed(title="✅ Thành công", description="Đã lưu User Token an toàn hệ thống!", color=discord.Color.green())
+            await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            await interaction.response.send_message("❌ Token lỗi!", ephemeral=True)
+            embed = discord.Embed(title="❌ Thất bại", description="Token không hợp lệ!", color=discord.Color.red())
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ==============================================================================
-# HYPE SQUAD SELECTOR VIEW
+# HYPE SQUAD SELECTOR VIEW (SỬ DỤNG ĐÚNG CUSTOM EMOJI CỦA BẠN)
 # ==============================================================================
 class HypeSquadView(discord.ui.View):
     def __init__(self, token: str):
@@ -408,18 +461,20 @@ class HypeSquadView(discord.ui.View):
         loop = asyncio.get_running_loop()
         res = await loop.run_in_executor(None, lambda: api.post("/hypesquad/online", {"house_id": house_id}))
         if res.status_code in (200, 204):
-            await interaction.response.edit_message(content=f"✅ Đã đổi sang nhà **{name}** thành công!", view=None)
+            embed = discord.Embed(title="🎉 Đổi HypeSquad Thành Công", description=f"Tài khoản của bạn đã chuyển sang nhà **{name}**.", color=discord.Color.blurple())
+            await interaction.response.edit_message(embed=embed, view=None)
         else:
-            await interaction.response.edit_message(content="❌ Lỗi khi đổi HypeSquad. Kiểm tra lại Token!", view=None)
+            embed = discord.Embed(title="❌ Lỗi", description="Không thể đổi HypeSquad. Kiểm tra lại Token!", color=discord.Color.red())
+            await interaction.response.edit_message(embed=embed, view=None)
 
-    @discord.ui.button(label="Bravery (Tím)", style=discord.ButtonStyle.primary, emoji="🟣")
-    async def b1(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 1, "Bravery")
+    @discord.ui.button(label="Bravery", style=discord.ButtonStyle.primary, emoji="<:hypesquad_2:1571114614975107144>")
+    async def b1(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 1, "HypeSquad Bravery")
 
-    @discord.ui.button(label="Brilliance (Đỏ)", style=discord.ButtonStyle.danger, emoji="🔴")
-    async def b2(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 2, "Brilliance")
+    @discord.ui.button(label="Brilliance", style=discord.ButtonStyle.danger, emoji="<:hypesquad_1:1571114521601245224>")
+    async def b2(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 2, "HypeSquad Brilliance")
 
-    @discord.ui.button(label="Balance (Xanh)", style=discord.ButtonStyle.success, emoji="🟢")
-    async def b3(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 3, "Balance")
+    @discord.ui.button(label="Balance", style=discord.ButtonStyle.success, emoji="<:hypesquad:1571114469130633316>")
+    async def b3(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 3, "HypeSquad Balance")
 
 
 # ==============================================================================
@@ -438,7 +493,15 @@ class MainDashboardView(discord.ui.View):
         if not token:
             await interaction.response.send_modal(TokenModal())
             return
-        await interaction.response.send_message("🚀 Đang quét và cày Quest tự động (Chạy ngầm an toàn)...", ephemeral=True)
+        
+        # Gửi thông báo bắt đầu cày kèm nút Xem/Hủy tiến trình
+        embed = discord.Embed(
+            title="🚀 ĐANG QUÉT & CÀY QUEST",
+            description="Hệ thống đã nhận token và đang tiến hành tự động cày ngầm an toàn để nhận Orb.",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text="Bấm nút bên dưới để xem tiến trình hoặc hủy lệnh cày bất cứ lúc nào.")
+        await interaction.response.send_message(embed=embed, view=ProgressControlView(interaction.user.id, "quest"), ephemeral=True)
 
     @discord.ui.button(label="Badge Farmer", style=discord.ButtonStyle.success, emoji="🎮", custom_id="menu:badge")
     async def badge_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -450,11 +513,29 @@ class MainDashboardView(discord.ui.View):
         if not token:
             await interaction.response.send_modal(TokenModal())
             return
-        await interaction.response.send_message("🏠 Chọn nhà HypeSquad của bạn:", view=HypeSquadView(token), ephemeral=True)
+        
+        embed = discord.Embed(
+            title="🏡 CHỌN NHÀ HYPESQUAD",
+            description="Vui lòng bấm chọn nhà HypeSquad bạn muốn nhận huy hiệu bên dưới:",
+            color=discord.Color.blurple()
+        )
+        await interaction.response.send_message(embed=embed, view=HypeSquadView(token), ephemeral=True)
 
     @discord.ui.button(label="Token", style=discord.ButtonStyle.secondary, emoji="🔑", custom_id="menu:token")
     async def token_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(TokenModal())
+
+
+def create_status_embed(user_id: int) -> Optional[discord.Embed]:
+    if user_id not in active_quests:
+        return None
+    data = active_quests[user_id]
+    quests = data["quests"]
+    embed = discord.Embed(title="🛡️ DISCORD QUEST ENGINE — LIVE DASHBOARD", color=discord.Color.from_rgb(46, 204, 113))
+    embed.add_field(name="👤 Tài khoản", value=f"**{data['user_name']}** — 🔮 Tổng Orb: **{data['total_orbs']} Orbs**", inline=False)
+    for idx, q in enumerate(quests, 1):
+        embed.add_field(name=f"#{idx} — {q['title'][:20]}", value=f"Trạng thái: `{q['status']}`", inline=True)
+    return embed
 
 
 # ==============================================================================
@@ -470,11 +551,11 @@ class QuestBotCog(commands.Cog):
         embed = discord.Embed(
             title="🪽 HỆ THỐNG TỰ ĐỘNG DISCORD TOOLS 🪽",
             description=(
-                "**Các tính năng tích hợp sẵn:**\n"
-                "• **AutoQuest** — Tự động nhận và cày Quest \n"
-                "• **Badge Farmer** — Cày game tùy chỉnh (Thời gian & Đa dạng game tối đa 100 game / 5000 giờ)\n"
+                "**Danh sách chức năng:**\n"
+                "• **AutoQuest** — Tự động nhận & cày Quest Orb an toàn\n"
+                "• **Badge Farmer** — Cày 100 game / 5000 giờ siêu tốc\n"
                 "• **HypeSquad** — Đổi nhà HypeSquad tức thì\n\n"
-                "*Bấm các nút bên dưới để sử dụng bảng điều khiển riêng tư.*"
+                "*Bấm các nút bên dưới để mở bảng điều khiển riêng tư.*"
             ),
             color=discord.Color.from_rgb(43, 45, 49)
         )
