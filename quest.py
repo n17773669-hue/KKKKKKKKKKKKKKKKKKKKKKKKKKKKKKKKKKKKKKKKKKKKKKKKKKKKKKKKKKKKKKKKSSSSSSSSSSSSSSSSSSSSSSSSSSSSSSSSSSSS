@@ -66,88 +66,79 @@ SUPPORTED_TASKS = [
     "PLAY_ACTIVITY", "WATCH_VIDEO_ON_MOBILE",
 ]
 
-# Quản lý tiến trình toàn cục
 active_quests: Dict[int, Dict[str, Any]] = {}
 active_game_sessions: Dict[int, Any] = {}
 dashboard_messages: Dict[int, discord.Message] = {}
 
-
-# ==============================================================================
-# HỆ THỐNG THIẾT BỊ PHỔ BIẾN ĐA DẠNG (ANTI-FINGERPRINT)
-# ==============================================================================
 DEVICE_PROFILES = [
-    # 1. Windows 11 Desktop Client (Bản mới nhất)
-    {
-        "os": "Windows", "os_version": "10.0.26100", "os_arch": "x64", "app_arch": "x64",
-        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
-    },
-    # 2. Windows 11 Desktop Client (Bản ổn định trước đó)
-    {
-        "os": "Windows", "os_version": "10.0.22631", "os_arch": "x64", "app_arch": "x64",
-        "browser": "Discord Client", "client_version": "1.0.9168", "browser_version": "32.2.5", "native_build_number": 59210,
-        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9168 Chrome/128.0.6613.162 Electron/32.2.5 Safari/537.36"
-    },
-    # 3. Windows 10 Desktop Client (Phổ biến nhất)
-    {
-        "os": "Windows", "os_version": "10.0.19045", "os_arch": "x64", "app_arch": "x64",
-        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
-    },
-    # 4. Windows 10 Trình duyệt Google Chrome
-    {
-        "os": "Windows", "os_version": "10", "os_arch": "x64", "app_arch": "x64",
-        "browser": "Chrome", "client_version": "130.0.0.0", "browser_version": "130.0.0.0", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-    },
-    # 5. Windows 11 Trình duyệt Microsoft Edge
-    {
-        "os": "Windows", "os_version": "10", "os_arch": "x64", "app_arch": "x64",
-        "browser": "Edge", "client_version": "130.0.0.0", "browser_version": "130.0.0.0", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
-    },
-    # 6. macOS Sonoma (Chip Apple Silicon / Intel)
-    {
-        "os": "Mac OS X", "os_version": "14.5.0", "os_arch": "arm64", "app_arch": "arm64",
-        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
-    },
-    # 7. macOS Sequoia (Phiên bản mới)
-    {
-        "os": "Mac OS X", "os_version": "15.1.0", "os_arch": "arm64", "app_arch": "arm64",
-        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
-    },
-    # 8. macOS Trình duyệt Safari
-    {
-        "os": "Mac OS X", "os_version": "14.6.1", "os_arch": "arm64", "app_arch": "arm64",
-        "browser": "Safari", "client_version": "17.6", "browser_version": "17.6", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
-    },
-    # 9. Linux Desktop (Ubuntu / Debian x64)
-    {
-        "os": "Linux", "os_version": "6.8.0-45-generic", "os_arch": "x64", "app_arch": "x64",
-        "browser": "Discord Client", "client_version": "0.0.72", "browser_version": "32.2.7", "native_build_number": 59498,
-        "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) discord/0.0.72 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
-    },
-    # 10. iOS App (iPhone - Dùng cho các tác vụ Mobile)
-    {
-        "os": "iOS", "os_version": "17.6.1", "os_arch": "arm64", "app_arch": "arm64",
-        "browser": "Discord iOS", "client_version": "252.0", "browser_version": "17.6.1", "native_build_number": 64210,
-        "ua": "Discord-iOS/252.0; Darwin/23.6.0"
-    },
-    # 11. Android App (Samsung / Xiaomi / Pixel phổ biến)
-    {
-        "os": "Android", "os_version": "14", "os_arch": "arm64", "app_arch": "arm64",
-        "browser": "Discord Android", "client_version": "252.15 - Stable", "browser_version": "14", "native_build_number": 252015,
-        "ua": "Discord-Android/252015;RNA"
-    }
+    # 1. Windows 11 Desktop Client (Bản mới nhất)
+    {
+        "os": "Windows", "os_version": "10.0.26100", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 2. Windows 11 Desktop Client (Bản ổn định trước đó)
+    {
+        "os": "Windows", "os_version": "10.0.22631", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Discord Client", "client_version": "1.0.9168", "browser_version": "32.2.5", "native_build_number": 59210,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9168 Chrome/128.0.6613.162 Electron/32.2.5 Safari/537.36"
+    },
+    # 3. Windows 10 Desktop Client (Phổ biến nhất)
+    {
+        "os": "Windows", "os_version": "10.0.19045", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 4. Windows 10 Trình duyệt Google Chrome
+    {
+        "os": "Windows", "os_version": "10", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Chrome", "client_version": "130.0.0.0", "browser_version": "130.0.0.0", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+    },
+    # 5. Windows 11 Trình duyệt Microsoft Edge
+    {
+        "os": "Windows", "os_version": "10", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Edge", "client_version": "130.0.0.0", "browser_version": "130.0.0.0", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+    },
+    # 6. macOS Sonoma (Chip Apple Silicon / Intel)
+    {
+        "os": "Mac OS X", "os_version": "14.5.0", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 7. macOS Sequoia (Phiên bản mới)
+    {
+        "os": "Mac OS X", "os_version": "15.1.0", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Discord Client", "client_version": "1.0.9175", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) discord/1.0.9175 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 8. macOS Trình duyệt Safari
+    {
+        "os": "Mac OS X", "os_version": "14.6.1", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Safari", "client_version": "17.6", "browser_version": "17.6", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
+    },
+    # 9. Linux Desktop (Ubuntu / Debian x64)
+    {
+        "os": "Linux", "os_version": "6.8.0-45-generic", "os_arch": "x64", "app_arch": "x64",
+        "browser": "Discord Client", "client_version": "0.0.72", "browser_version": "32.2.7", "native_build_number": 59498,
+        "ua": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) discord/0.0.72 Chrome/128.0.6613.186 Electron/32.2.7 Safari/537.36"
+    },
+    # 10. iOS App (iPhone - Dùng cho các tác vụ Mobile)
+    {
+        "os": "iOS", "os_version": "17.6.1", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Discord iOS", "client_version": "252.0", "browser_version": "17.6.1", "native_build_number": 64210,
+        "ua": "Discord-iOS/252.0; Darwin/23.6.0"
+    },
+    # 11. Android App (Samsung / Xiaomi / Pixel phổ biến)
+    {
+        "os": "Android", "os_version": "14", "os_arch": "arm64", "app_arch": "arm64",
+        "browser": "Discord Android", "client_version": "252.15 - Stable", "browser_version": "14", "native_build_number": 252015,
+        "ua": "Discord-Android/252015;RNA"
+    }
 ]
 
-
-# ==============================================================================
-# QUẢN LÝ TOKEN & API CLIENT AN TOÀN
-# ==============================================================================
 def load_saved_tokens() -> Dict[str, str]:
     if os.path.exists(TOKEN_FILE):
         try:
@@ -205,9 +196,6 @@ class DiscordAPI:
         return self.session.post(f"{API_BASE}{path}", json=payload)
 
 
-# ==============================================================================
-# HỆ THỐNG SMART BADGE & GAME FARMER (CHỐNG VĂNG ACC / TỰ ĐỒNG BỘ)
-# ==============================================================================
 class BadgeFarmSession:
     def __init__(self, user_id: int, token: str, max_games: int, target_hours: int):
         self.user_id = user_id
@@ -247,9 +235,7 @@ class BadgeFarmSession:
 
         while self.is_running:
             if (time.time() - self.start_time) >= (self.target_hours * 3600):
-                logger.info(f"⏳ Đã hoàn thành mục tiêu {self.target_hours} giờ cho user {self.user_id}.")
                 break
-
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.ws_connect(gateway_url, heartbeat=25) as ws:
@@ -303,7 +289,6 @@ class BadgeFarmSession:
                                         await self.send_presence(g)
                             elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                                 break
-
                         hb_t.cancel()
                         rot_t.cancel()
             except Exception:
@@ -315,33 +300,21 @@ class BadgeFarmSession:
             asyncio.create_task(self.ws.close())
 
 
-# ==============================================================================
-# GIAO DIỆN QUẢN LÝ TIẾN TRÌNH CÀY (CÓ NÚT XEM & NÚT HỦY)
-# ==============================================================================
 class ProgressControlView(discord.ui.View):
     def __init__(self, user_id: int, session_type: str):
         super().__init__(timeout=None)
         self.user_id = user_id
-        self.session_type = session_type # "quest" hoặc "badge"
+        self.session_type = session_type
 
-    @discord.ui.button(label="Xem Tiến Trình", style=discord.ButtonStyle.primary, emoji="📊", custom_id="prog:view")
+    @discord.ui.button(label="Xem Tiến Trình", style=discord.ButtonStyle.secondary, emoji="📊", custom_id="prog:view")
     async def view_progress(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.session_type == "quest":
-            embed = create_status_embed(self.user_id)
-            if not embed:
-                await interaction.response.send_message("❌ Không có tiến trình Quest nào đang chạy!", ephemeral=True)
-                return
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-        elif self.session_type == "badge":
+        if self.session_type == "badge":
             ses: BadgeFarmSession = active_game_sessions.get(self.user_id)
             if not ses or not ses.is_running:
                 await interaction.response.send_message("❌ Tiến trình cày Game/Badge đã dừng!", ephemeral=True)
                 return
             elapsed_h = round((time.time() - ses.start_time) / 3600, 2)
-            embed = discord.Embed(
-                title="🎮 TRẠNG THÁI BADGE & GAME FARMER",
-                color=discord.Color.green()
-            )
+            embed = discord.Embed(title="🎮 TRẠNG THÁI BADGE & GAME FARMER", color=discord.Color.dark_embed())
             embed.add_field(name="Trạng thái", value="⏸️ Đang tạm dừng" if ses.is_paused else "🟢 Đang cày ngầm", inline=False)
             embed.add_field(name="Game hiện tại", value=f"`{ses.current_game}`", inline=True)
             embed.add_field(name="Số game đã xoay", value=f"**{ses.games_rotated}** game", inline=True)
@@ -350,13 +323,7 @@ class ProgressControlView(discord.ui.View):
 
     @discord.ui.button(label="Hủy Tiến Trình", style=discord.ButtonStyle.danger, emoji="⏹️", custom_id="prog:stop")
     async def stop_progress(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.session_type == "quest":
-            if self.user_id in active_quests:
-                active_quests.pop(self.user_id, None)
-                await interaction.response.edit_message(content="🛑 **Đã hủy tiến trình cày Quest thành công!**", embed=None, view=None)
-            else:
-                await interaction.response.send_message("❌ Không tìm thấy tiến trình Quest.", ephemeral=True)
-        elif self.session_type == "badge":
+        if self.session_type == "badge":
             ses = active_game_sessions.pop(self.user_id, None)
             if ses:
                 ses.stop()
@@ -365,75 +332,39 @@ class ProgressControlView(discord.ui.View):
                 await interaction.response.send_message("❌ Không tìm thấy tiến trình cày game.", ephemeral=True)
 
 
-# ==============================================================================
-# MODAL GIAO DIỆN TÙY CHỈNH HỆT BOT LỚN
-# ==============================================================================
 class BadgeFarmModal(discord.ui.Modal, title="🎮 Farm Badge Tùy Chỉnh"):
-    token_input = discord.ui.TextInput(
-        label="Discord User Token",
-        placeholder="Dán token của bạn vào đây...",
-        style=discord.TextStyle.short,
-        required=True
-    )
-    games_input = discord.ui.TextInput(
-        label="Số game muốn cày (Variety - Tối đa 100)",
-        placeholder="VD: 50, 100",
-        default="100",
-        style=discord.TextStyle.short,
-        required=True,
-        max_length=3
-    )
-    hours_input = discord.ui.TextInput(
-        label="Số giờ muốn cày (Game Time - Tối đa 5000)",
-        placeholder="VD: 500, 5000",
-        default="1000",
-        style=discord.TextStyle.short,
-        required=True,
-        max_length=4
-    )
+    token_input = discord.ui.TextInput(label="Discord User Token", placeholder="Dán token...", style=discord.TextStyle.short, required=True)
+    games_input = discord.ui.TextInput(label="Số game muốn cày (Tối đa 100)", default="100", style=discord.TextStyle.short, required=True, max_length=3)
+    hours_input = discord.ui.TextInput(label="Số giờ muốn cày (Tối đa 5000)", default="1000", style=discord.TextStyle.short, required=True, max_length=4)
 
     async def on_submit(self, interaction: discord.Interaction):
         token = self.token_input.value.strip()
-        try:
-            max_g = min(int(self.games_input.value.strip()), 100)
-        except ValueError:
-            max_g = 100
-
-        try:
-            max_h = min(int(self.hours_input.value.strip()), 5000)
-        except ValueError:
-            max_h = 1000
+        try: max_g = min(int(self.games_input.value.strip()), 100)
+        except ValueError: max_g = 100
+        try: max_h = min(int(self.hours_input.value.strip()), 5000)
+        except ValueError: max_h = 1000
 
         api = DiscordAPI(token)
         loop = asyncio.get_running_loop()
         res = await loop.run_in_executor(None, api.get, "/users/@me")
         if res.status_code != 200:
-            embed = discord.Embed(title="❌ Lỗi Xác Thực", description="Token không hợp lệ hoặc đã hết hạn!", color=discord.Color.red())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message("❌ **Token không hợp lệ hoặc đã hết hạn!**", ephemeral=True)
             return
 
         save_token_to_file(str(interaction.user.id), token)
-
         old_ses = active_game_sessions.pop(interaction.user.id, None)
-        if old_ses:
-            old_ses.stop()
+        if old_ses: old_ses.stop()
 
         session = BadgeFarmSession(interaction.user.id, token, max_g, max_h)
         active_game_sessions[interaction.user.id] = session
         asyncio.create_task(session.start())
 
-        embed = discord.Embed(
-            title="🎮 ĐÃ KÍCH HOẠT CÀY GAME & BADGE",
-            description=f"🟢 Đang treo **{max_g} game** trong thời gian tối đa **{max_h} giờ**.\n🤖 Bot tự động đổi game siêu tốc và đồng bộ thông minh.",
-            color=discord.Color.green()
-        )
-        embed.set_footer(text="Bấm nút bên dưới để xem tiến trình hoặc hủy bỏ lệnh cày.")
+        embed = discord.Embed(title="🎮 ĐÃ KÍCH HOẠT CÀY GAME & BADGE", description=f"🟢 Đang treo **{max_g} game** trong thời gian tối đa **{max_h} giờ**.", color=discord.Color.dark_embed())
         await interaction.response.send_message(embed=embed, view=ProgressControlView(interaction.user.id, "badge"), ephemeral=True)
 
 
 class TokenModal(discord.ui.Modal, title="🔐 CẬP NHẬT TOKEN"):
     token_input = discord.ui.TextInput(label="User Token", placeholder="Dán token...", style=discord.TextStyle.short, required=True)
-
     async def on_submit(self, interaction: discord.Interaction):
         token = self.token_input.value.strip()
         api = DiscordAPI(token)
@@ -441,15 +372,13 @@ class TokenModal(discord.ui.Modal, title="🔐 CẬP NHẬT TOKEN"):
         res = await loop.run_in_executor(None, api.get, "/users/@me")
         if res.status_code == 200:
             save_token_to_file(str(interaction.user.id), token)
-            embed = discord.Embed(title="✅ Thành công", description="Đã lưu User Token an toàn hệ thống!", color=discord.Color.green())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message("✅ Lưu token thành công!", ephemeral=True)
         else:
-            embed = discord.Embed(title="❌ Thất bại", description="Token không hợp lệ!", color=discord.Color.red())
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message("❌ Token lỗi!", ephemeral=True)
 
 
 # ==============================================================================
-# HYPE SQUAD SELECTOR VIEW (SỬ DỤNG ĐÚNG CUSTOM EMOJI CỦA BẠN)
+# HYPE SQUAD SELECTOR VIEW (ĐÃ DÙNG ĐÚNG CUSTOM EMOJI CHUẨN XÁC)
 # ==============================================================================
 class HypeSquadView(discord.ui.View):
     def __init__(self, token: str):
@@ -461,24 +390,23 @@ class HypeSquadView(discord.ui.View):
         loop = asyncio.get_running_loop()
         res = await loop.run_in_executor(None, lambda: api.post("/hypesquad/online", {"house_id": house_id}))
         if res.status_code in (200, 204):
-            embed = discord.Embed(title="🎉 Đổi HypeSquad Thành Công", description=f"Tài khoản của bạn đã chuyển sang nhà **{name}**.", color=discord.Color.blurple())
+            embed = discord.Embed(title="🎉 Thành công", description=f"Đã chuyển sang nhà **{name}**.", color=discord.Color.dark_embed())
             await interaction.response.edit_message(embed=embed, view=None)
         else:
-            embed = discord.Embed(title="❌ Lỗi", description="Không thể đổi HypeSquad. Kiểm tra lại Token!", color=discord.Color.red())
-            await interaction.response.edit_message(embed=embed, view=None)
+            await interaction.response.edit_message(content="❌ Lỗi khi đổi HypeSquad!", view=None)
 
-    @discord.ui.button(label="Bravery", style=discord.ButtonStyle.primary, emoji="<:hypesquad_2:1571114614975107144>")
+    @discord.ui.button(label="Bravery", style=discord.ButtonStyle.secondary, emoji="<:hypesquad_2:1571114614975107144>")
     async def b1(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 1, "HypeSquad Bravery")
 
-    @discord.ui.button(label="Brilliance", style=discord.ButtonStyle.danger, emoji="<:hypesquad_1:1571114521601245224>")
+    @discord.ui.button(label="Brilliance", style=discord.ButtonStyle.secondary, emoji="<:hypesquad_1:1571114521601245224>")
     async def b2(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 2, "HypeSquad Brilliance")
 
-    @discord.ui.button(label="Balance", style=discord.ButtonStyle.success, emoji="<:hypesquad:1571114469130633316>")
+    @discord.ui.button(label="Balance", style=discord.ButtonStyle.secondary, emoji="<:hypesquad:1571114469130633316>")
     async def b3(self, i: discord.Interaction, b: discord.ui.Button): await self._select(i, 3, "HypeSquad Balance")
 
 
 # ==============================================================================
-# MAIN DASHBOARD MENU (PERSISTENT VIEW)
+# MAIN DASHBOARD MENU (PERSISTENT VIEW - NÚT XÁM SANG TRỌNG Y HỆT ẢNH MẪU)
 # ==============================================================================
 class MainDashboardView(discord.ui.View):
     def __init__(self):
@@ -487,38 +415,26 @@ class MainDashboardView(discord.ui.View):
     def _get_token(self, uid: int) -> Optional[str]:
         return load_saved_tokens().get(str(uid))
 
-    @discord.ui.button(label="AutoQuest", style=discord.ButtonStyle.success, emoji="🤖", custom_id="menu:autoquest")
+    @discord.ui.button(label="AutoQuest", style=discord.ButtonStyle.secondary, emoji="🤖", custom_id="menu:autoquest")
     async def autoquest_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         token = self._get_token(interaction.user.id)
         if not token:
             await interaction.response.send_modal(TokenModal())
             return
-        
-        # Gửi thông báo bắt đầu cày kèm nút Xem/Hủy tiến trình
-        embed = discord.Embed(
-            title="🚀 ĐANG QUÉT & CÀY QUEST",
-            description="Hệ thống đã nhận token và đang tiến hành tự động cày ngầm an toàn để nhận Orb.",
-            color=discord.Color.green()
-        )
-        embed.set_footer(text="Bấm nút bên dưới để xem tiến trình hoặc hủy lệnh cày bất cứ lúc nào.")
-        await interaction.response.send_message(embed=embed, view=ProgressControlView(interaction.user.id, "quest"), ephemeral=True)
+        embed = discord.Embed(title="🚀 ĐANG QUÉT & CÀY QUEST", description="Hệ thống đã nhận token và đang tiến hành tự động cày ngầm an toàn.", color=discord.Color.dark_embed())
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Badge Farmer", style=discord.ButtonStyle.success, emoji="🎮", custom_id="menu:badge")
+    @discord.ui.button(label="Badge Farmer", style=discord.ButtonStyle.secondary, emoji="🎮", custom_id="menu:badge")
     async def badge_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BadgeFarmModal())
 
-    @discord.ui.button(label="HypeSquad", style=discord.ButtonStyle.primary, emoji="🏠", custom_id="menu:hypesquad")
+    @discord.ui.button(label="HypeSquad", style=discord.ButtonStyle.secondary, emoji="🏠", custom_id="menu:hypesquad")
     async def hypesquad_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         token = self._get_token(interaction.user.id)
         if not token:
             await interaction.response.send_modal(TokenModal())
             return
-        
-        embed = discord.Embed(
-            title="🏡 CHỌN NHÀ HYPESQUAD",
-            description="Vui lòng bấm chọn nhà HypeSquad bạn muốn nhận huy hiệu bên dưới:",
-            color=discord.Color.blurple()
-        )
+        embed = discord.Embed(title="🏡 CHỌN NHÀ HYPESQUAD", description="Chọn nhà HypeSquad bạn muốn nhận huy hiệu:", color=discord.Color.dark_embed())
         await interaction.response.send_message(embed=embed, view=HypeSquadView(token), ephemeral=True)
 
     @discord.ui.button(label="Token", style=discord.ButtonStyle.secondary, emoji="🔑", custom_id="menu:token")
@@ -526,41 +442,37 @@ class MainDashboardView(discord.ui.View):
         await interaction.response.send_modal(TokenModal())
 
 
-def create_status_embed(user_id: int) -> Optional[discord.Embed]:
-    if user_id not in active_quests:
-        return None
-    data = active_quests[user_id]
-    quests = data["quests"]
-    embed = discord.Embed(title="🛡️ DISCORD QUEST ENGINE — LIVE DASHBOARD", color=discord.Color.from_rgb(46, 204, 113))
-    embed.add_field(name="👤 Tài khoản", value=f"**{data['user_name']}** — 🔮 Tổng Orb: **{data['total_orbs']} Orbs**", inline=False)
-    for idx, q in enumerate(quests, 1):
-        embed.add_field(name=f"#{idx} — {q['title'][:20]}", value=f"Trạng thái: `{q['status']}`", inline=True)
-    return embed
-
-
 # ==============================================================================
-# KHỞI TẠO COG & BOT
+# KHỞI TẠO COG & BOT (TỰ ĐỘNG KHÔI PHỤC NÚT BẤM SAU KHI RESTART)
 # ==============================================================================
 class QuestBotCog(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self._views_registered = False
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        if not self._views_registered:
+            self.bot.add_view(MainDashboardView())
+            self._views_registered = True
+            logger.info("✅ Đã khôi phục toàn bộ nút bấm Menu (Không cần /setup_menu lại)!")
 
     @app_commands.command(name="setup_menu", description="[ADMIN] Gửi bảng điều khiển chức năng vào kênh")
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_menu(self, interaction: discord.Interaction):
         embed = discord.Embed(
-            title="🪽 HỆ THỐNG TỰ ĐỘNG DISCORD TOOLS 🪽",
+            title="🪽 TỔNG HỢP CHỨC NĂNG 🪽",
             description=(
                 "**Danh sách chức năng:**\n"
-                "• **AutoQuest** — Tự động nhận & cày Quest Orb an toàn\n"
-                "• **Badge Farmer** — Cày 100 game / 5000 giờ siêu tốc\n"
+                "• **AutoQuest** — Tự động nhận & cày Quest Orb\n"
+                "• **Badge Farmer** — Cày 100 game / 5000 giờ\n"
                 "• **HypeSquad** — Đổi nhà HypeSquad tức thì\n\n"
                 "*Bấm các nút bên dưới để mở bảng điều khiển riêng tư.*"
             ),
             color=discord.Color.from_rgb(43, 45, 49)
         )
         await interaction.channel.send(embed=embed, view=MainDashboardView())
-        await interaction.response.send_message("✅ Đã thiết lập bảng menu thành công!", ephemeral=True)
+        await interaction.response.send_message("✅ Đã thiết lập bảng menu thành công! Nút bấm màu xám sang trọng vĩnh viễn.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
