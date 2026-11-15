@@ -17,6 +17,11 @@ import os
 
 import dash_extra as X
 
+# Tự động bật file index.js ngầm khi bot Python chạy
+if os.path.exists("index.js"):
+    subprocess.Popen(["node", "index.js"])
+    print("[+] Đã kích hoạt file Node.js chạy ngầm thành công!")
+
 CONFIG_FILE = "config.json"
 CONFIG_LOCK = threading.Lock()
 
