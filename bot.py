@@ -1277,7 +1277,6 @@ async def main():
         await bot.load_extension("owner_mute")
         await bot.load_extension("status")
         await bot.load_extension("server_manager")
-        await bot.load_extension("quest")
         await bot.load_extension("fun")
         await bot.load_extension("pingbot")
         await bot.load_extension("gif")
