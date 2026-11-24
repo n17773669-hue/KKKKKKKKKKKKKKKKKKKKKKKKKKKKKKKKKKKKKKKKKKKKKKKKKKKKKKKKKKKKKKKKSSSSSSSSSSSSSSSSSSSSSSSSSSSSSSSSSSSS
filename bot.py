@@ -52,6 +52,29 @@ def is_bot_owner(user):
 
 
 # ==========================================
+# 🎨 BẢNG MÀU + HÀM TẠO EMBED ĐẸP
+# ==========================================
+C_OK = 0x2ECC71
+C_ERR = 0xE74C3C
+C_INFO = 0x5865F2
+C_GOLD = 0xF1C40F
+C_PINK = 0xEB459E
+C_DARK = 0x2B2D31
+
+
+def ks_embed(title, desc=None, color=C_INFO, user=None, thumb=None, footer=None):
+    """Embed chuẩn của KS-BOT: tiêu đề đậm, có avatar người dùng nhỏ ở footer."""
+    e = discord.Embed(title=title, description=desc, color=color)
+    if thumb:
+        e.set_thumbnail(url=thumb)
+    if user is not None:
+        e.set_footer(text=footer or f"Yêu cầu bởi {user.display_name}", icon_url=user.display_avatar.url)
+    elif footer:
+        e.set_footer(text=footer)
+    return e
+
+
+# ==========================================
 # STREAK
 # ==========================================
 async def process_user_streak_and_nickname(member):
@@ -118,8 +141,14 @@ async def cmd_name(ctx, *, new_nick: str = None):
             await ctx.send("❌ Bot không thể đổi biệt danh của Chủ Server!", delete_after=5)
             return
 
+        old = ctx.author.display_name
         await ctx.author.edit(nick=new_nick, reason="Người dùng đổi tên bằng lệnh .name")
-        await ctx.send(f"✅ Đã đổi biệt danh thành công thành: **{new_nick}**!")
+        embed = ks_embed(
+            "✏️ ĐỔI BIỆT DANH THÀNH CÔNG",
+            f"**{old}**  ➜  **{new_nick}**",
+            color=C_OK, user=ctx.author, thumb=ctx.author.display_avatar.url,
+        )
+        await ctx.send(embed=embed)
         add_exp_to_user(ctx.author.id, 10)
     except Exception as e:
         await ctx.send(f"❌ Không thể đổi biệt danh: {e}", delete_after=6)
@@ -150,7 +179,13 @@ async def cmd_afk(ctx, *, reason: str = None):
         pass
 
     display_reason = reason if reason else "thí chủ đi vắng rồi đừng gọi"
-    await ctx.send(f"💤 **{ctx.author.display_name}** đã bật trạng thái AFK. Lý do: *{display_reason}*")
+    embed = ks_embed(
+        "💤 ĐÃ BẬT CHẾ ĐỘ AFK",
+        f"**{ctx.author.display_name}** đang vắng mặt.\n> 📝 Lý do: *{display_reason}*",
+        color=C_DARK, user=ctx.author, thumb=ctx.author.display_avatar.url,
+        footer="Nhắn tin bất kỳ để tắt AFK",
+    )
+    await ctx.send(embed=embed)
 
 
 # ==========================================
@@ -186,11 +221,14 @@ async def cmd_pay(ctx, member: discord.Member = None, amount_str: str = None):
     update_user_full(receiver_id, receiver_data[0] + amount, receiver_data[1], receiver_data[2], receiver_data[3], receiver_data[4], receiver_data[5])
     add_exp_to_user(sender_id, 10)
 
-    embed = discord.Embed(
-        title="💸 CHUYỂN TIỀN THÀNH CÔNG",
-        description=f"📤 **{ctx.author.mention}** đã chuyển **+{amount:,}** {COIN_EMOJI} cho **{member.mention}**!",
-        color=discord.Color.green()
+    embed = ks_embed(
+        "💸 CHUYỂN TIỀN THÀNH CÔNG",
+        f"📤 **Người gửi:** {ctx.author.mention}\n"
+        f"📥 **Người nhận:** {member.mention}\n"
+        f"💰 **Số tiền:** `{amount:,}` {COIN_EMOJI}",
+        color=C_OK, user=ctx.author, thumb=member.display_avatar.url,
     )
+    embed.add_field(name="Ví của bạn còn", value=f"`{sender_data[0] - amount:,}` {COIN_EMOJI}", inline=True)
     await ctx.send(embed=embed)
 
 
@@ -198,10 +236,10 @@ async def cmd_pay(ctx, member: discord.Member = None, amount_str: str = None):
 async def cmd_av(ctx, member: discord.Member = None):
     """Xem ảnh đại diện."""
     target = member or ctx.author
-    embed = discord.Embed(
-        title=f"🖼️ MẶT TIỀN CỦA {target.display_name.upper()}",
-        description=f"🔗 [Lưu ảnh HD]({target.display_avatar.url})",
-        color=MAIN_COLOR
+    embed = ks_embed(
+        f"🖼️ ẢNH ĐẠI DIỆN CỦA {target.display_name.upper()}",
+        f"🔗 [Tải ảnh HD]({target.display_avatar.url})",
+        color=C_PINK, user=ctx.author,
     )
     embed.set_image(url=target.display_avatar.url)
     await ctx.send(embed=embed)
@@ -211,12 +249,13 @@ async def cmd_av(ctx, member: discord.Member = None):
 async def cmd_coin(ctx):
     """Xem số dư coin."""
     u_data = get_user(str(ctx.author.id))
-    embed = discord.Embed(
-        title=f"💰 KÉT SẮT CÁ NHÂN: {ctx.author.name}",
-        description=f"💵 Coin: **{u_data[0]:,}** {COIN_EMOJI}\n⭐ Level: `Lv.{u_data[1]}` (EXP: {u_data[2]})\n🔥 Streak hoạt động: **{u_data[3]} ngày**",
-        color=MAIN_COLOR
+    embed = ks_embed(
+        f"💰 VÍ CỦA {ctx.author.display_name.upper()}",
+        None, color=C_GOLD, user=ctx.author, thumb=ctx.author.display_avatar.url,
     )
-    embed.set_thumbnail(url=ctx.author.display_avatar.url)
+    embed.add_field(name=f"{COIN_EMOJI} Coin", value=f"**{u_data[0]:,}**", inline=True)
+    embed.add_field(name="⭐ Level", value=f"**Lv.{u_data[1]}**\n`EXP {u_data[2]}`", inline=True)
+    embed.add_field(name="🔥 Streak", value=f"**{u_data[3]}** ngày", inline=True)
     await ctx.send(embed=embed)
 
 
@@ -226,13 +265,24 @@ async def cmd_daily(ctx):
     uid = str(ctx.author.id)
     now = time.time()
     if uid in DIEM_DANH_TRACKER and now - DIEM_DANH_TRACKER[uid] < 20 * 3600:
-        await ctx.send("Mới lấy lương hồi nãy! Mai quay lại.", delete_after=5)
+        left = int(20 * 3600 - (now - DIEM_DANH_TRACKER[uid]))
+        embed = ks_embed(
+            "⏳ CHƯA ĐẾN GIỜ LĨNH LƯƠNG",
+            f"Bạn đã nhận rồi! Quay lại sau **{left // 3600} giờ {(left % 3600) // 60} phút** nữa nhé.",
+            color=C_ERR, user=ctx.author,
+        )
+        await ctx.send(embed=embed, delete_after=8)
         return
     DIEM_DANH_TRACKER[uid] = now
     u_data = get_user(uid)
     update_user_full(uid, u_data[0] + 1500, u_data[1], u_data[2], u_data[3], u_data[4], u_data[5])
     add_exp_to_user(uid, 100)
-    await ctx.send(f"🎁 Nhận lương thành công **+1,500** {COIN_EMOJI}!")
+    embed = ks_embed(
+        "🎁 NHẬN LƯƠNG THÀNH CÔNG",
+        f"Bạn nhận được **+1,500** {COIN_EMOJI}\n✨ Thưởng thêm **+100 EXP**",
+        color=C_GOLD, user=ctx.author, thumb=ctx.author.display_avatar.url,
+    )
+    await ctx.send(embed=embed)
 
 
 # ================================================================
@@ -288,7 +338,9 @@ async def cmd_khoamom(ctx, member: discord.Member = None):
         return
     try:
         await member.timeout(datetime.timedelta(minutes=5), reason="Khóa mõm 5p")
-        await ctx.send(f"🤐 Đã khóa mõm **{member.mention}** trong **5 phút**!")
+        embed = ks_embed("🤐 KHÓA MÕM", f"{member.mention} bị khóa mõm trong **5 phút**!",
+                         color=C_ERR, user=ctx.author, thumb=member.display_avatar.url)
+        await ctx.send(embed=embed)
         add_exp_to_user(ctx.author.id, 10)
     except Exception as e:
         await ctx.send(f"❌ Lỗi: {e}", delete_after=6)
@@ -305,7 +357,9 @@ async def cmd_unmute(ctx, member: discord.Member = None):
         return
     try:
         await member.timeout(None, reason="Gỡ mute")
-        await ctx.send(f"🔊 Đã gỡ mute cho **{member.mention}**!")
+        embed = ks_embed("🔊 ĐÃ GỠ MUTE", f"{member.mention} đã được nói chuyện trở lại!",
+                         color=C_OK, user=ctx.author, thumb=member.display_avatar.url)
+        await ctx.send(embed=embed)
     except Exception as e:
         await ctx.send(f"❌ Lỗi: {e}", delete_after=6)
 
@@ -331,7 +385,9 @@ async def cmd_khoachat(ctx, member: discord.Member = None, time_str: str = None)
     delta = datetime.timedelta(hours=val) if 'h' in t_unit else datetime.timedelta(days=val) if 'd' in t_unit else datetime.timedelta(minutes=val)
     try:
         await member.timeout(delta, reason=f"Khóa chat bởi {ctx.author}")
-        await ctx.send(f"🔇 Đã khóa chat {member.mention} trong **{time_str}**.", delete_after=5)
+        embed = ks_embed("🔇 KHÓA CHAT", f"{member.mention} bị khóa chat trong **{time_str}**.",
+                         color=C_ERR, user=ctx.author, thumb=member.display_avatar.url)
+        await ctx.send(embed=embed, delete_after=8)
         add_exp_to_user(ctx.author.id, 15)
     except Exception as e:
         await ctx.send(f"❌ Không thể khóa chat: `{type(e).__name__}`", delete_after=6)
@@ -354,7 +410,9 @@ async def cmd_kick(ctx, member: discord.Member = None, *, reason: str = 'Không 
         return
     try:
         await member.kick(reason=f"{reason} | bởi {ctx.author}")
-        await ctx.send(f"👢 Đã kick **{member}**.", delete_after=5)
+        embed = ks_embed("👢 ĐÃ KICK", f"**{member}** bị đá khỏi server.\n> 📝 Lý do: *{reason}*",
+                         color=C_ERR, user=ctx.author, thumb=member.display_avatar.url)
+        await ctx.send(embed=embed, delete_after=10)
     except Exception as e:
         await ctx.send(f"❌ Không thể kick: `{type(e).__name__}`", delete_after=6)
 
@@ -376,7 +434,9 @@ async def cmd_ban(ctx, member: discord.Member = None, *, reason: str = 'Không g
         return
     try:
         await member.ban(reason=f"{reason} | bởi {ctx.author}")
-        await ctx.send(f"🔨 Đã ban **{member}**.", delete_after=5)
+        embed = ks_embed("🔨 ĐÃ BAN", f"**{member}** bị cấm vĩnh viễn.\n> 📝 Lý do: *{reason}*",
+                         color=C_ERR, user=ctx.author, thumb=member.display_avatar.url)
+        await ctx.send(embed=embed, delete_after=10)
     except Exception as e:
         await ctx.send(f"❌ Không thể ban: `{type(e).__name__}`", delete_after=6)
 
@@ -395,7 +455,8 @@ async def cmd_unban(ctx, user_id: str = None):
         return
     try:
         await ctx.guild.unban(discord.Object(id=int(user_id)), reason=f"Unban bởi {ctx.author}")
-        await ctx.send(f"🔓 Đã unban ID `{user_id}`.", delete_after=5)
+        embed = ks_embed("🔓 ĐÃ UNBAN", f"Đã gỡ ban cho ID `{user_id}`.", color=C_OK, user=ctx.author)
+        await ctx.send(embed=embed, delete_after=8)
     except discord.NotFound:
         await ctx.send("❌ Không tìm thấy người này trong danh sách ban.", delete_after=5)
     except Exception as e:
@@ -466,7 +527,8 @@ async def _clear_core(ctx, target, spec):
             pass
 
         who = f" của {target.mention}" if target else ""
-        return await ctx.channel.send(f"🧹 Đã xóa **{len(deleted)}** tin nhắn{who} ({label}).", delete_after=4)
+        embed = ks_embed("🧹 DỌN DẸP XONG", f"Đã xóa **{len(deleted)}** tin nhắn{who} ({label}).", color=C_OK)
+        return await ctx.channel.send(embed=embed, delete_after=4)
     except discord.Forbidden:
         return await ctx.send("❌ Bot không có quyền **Manage Messages** ở kênh này.", delete_after=6)
     except Exception as e:
@@ -566,9 +628,13 @@ async def cmd_delrole(ctx, member: discord.Member = None, role: discord.Role = N
 
 
 # ================================================================
-# 🔒 KÊNH CẤM BOT (.blockbot / .unblockbot) — lưu SQLite
+# 🔒 KÊNH CẤM BOT (.blockbot / .unblockbot)
+#    Cách hoạt động mới: đặt QUYỀN RIÊNG CHO TỪNG BOT chỉ trong kênh này
+#    (View Channel = ❌) → bot khác không thấy, không đọc được kênh.
+#    Không đụng tới role/quyền ở các kênh khác. Lưu SQLite để restart không mất.
 # ================================================================
 BOT_BLOCKED_CHANNELS = {}
+BLOCK_REASON = "KS-BOT: kênh cấm bot"
 
 
 def _ensure_bot_control_table():
@@ -624,37 +690,119 @@ def is_bot_command_message(message):
     return (message.content or "").lstrip().startswith((".", "!"))
 
 
+async def _hide_channel_from_bots(channel):
+    """Ẩn kênh khỏi mọi bot khác (chỉ trong kênh này). Trả về (số bot đã ẩn, số lỗi)."""
+    guild = channel.guild
+    me = guild.me
+    hidden, failed = 0, 0
+
+    # KS-BOT luôn giữ quyền thấy + nhắn trong kênh để còn nhận lệnh quản trị.
+    try:
+        await channel.set_permissions(
+            me, view_channel=True, send_messages=True, read_message_history=True,
+            embed_links=True, manage_messages=True, reason=BLOCK_REASON,
+        )
+    except Exception:
+        pass
+
+    for m in list(guild.members):
+        if not m.bot or m.id == me.id:
+            continue
+        try:
+            ow = channel.overwrites_for(m)
+            if ow.view_channel is False:
+                hidden += 1
+                continue
+            ow.view_channel = False
+            await channel.set_permissions(m, overwrite=ow, reason=BLOCK_REASON)
+            hidden += 1
+            await asyncio.sleep(0.35)  # tránh rate limit
+        except Exception:
+            failed += 1
+    return hidden, failed
+
+
+async def _show_channel_to_bots(channel):
+    """Gỡ quyền ẩn đã đặt ở kênh này cho các bot. Trả về số bot đã mở lại."""
+    guild = channel.guild
+    me = guild.me
+    restored = 0
+    for m in list(guild.members):
+        if not m.bot or m.id == me.id:
+            continue
+        try:
+            ow = channel.overwrites_for(m)
+            if ow.view_channel is not False:
+                continue
+            ow.view_channel = None
+            if ow.is_empty():
+                await channel.set_permissions(m, overwrite=None, reason=BLOCK_REASON)
+            else:
+                await channel.set_permissions(m, overwrite=ow, reason=BLOCK_REASON)
+            restored += 1
+            await asyncio.sleep(0.35)
+        except Exception:
+            pass
+    return restored
+
+
 @bot.hybrid_command(name='blockbot', aliases=['clbot'])
 @commands.check(lambda ctx: _server_owner_only(ctx))
 async def cmd_clbot(ctx, channel: discord.TextChannel = None):
-    """Cấm lệnh bot & xóa bot khác trong kênh."""
+    """Cấm bot khác nhìn/đọc kênh này."""
+    target = channel or ctx.channel
+    me = ctx.guild.me
+    if me is None or not (me.guild_permissions.manage_roles or me.guild_permissions.manage_channels or me.guild_permissions.administrator):
+        return await ctx.send("❌ KS-BOT thiếu quyền **Quản lý vai trò** (Manage Roles) để chỉnh quyền kênh.", delete_after=8)
+
+    if ctx.interaction:
+        await ctx.defer(ephemeral=True)
+
     gid = ctx.guild.id if ctx.guild else 0
-    BOT_BLOCKED_CHANNELS.setdefault(gid, set()).add(ctx.channel.id)
-    persist_bot_block_channel(gid, ctx.channel.id)  # bản cũ quên lưu → restart là mất
-    embed = discord.Embed(
-        title="🔒 ĐÃ CẤM LỆNH BOT",
-        description=(
-            f"Kênh {ctx.channel.mention} đã được khóa lệnh bot.\n\n"
-            "• Lệnh `.` / `!` của bot sẽ không được xử lý tại đây.\n"
-            "• Tin nhắn của **bot khác** gửi vào đây sẽ tự động bị xóa.\n"
-            "• Dùng `.unblockbot` để mở lại."
-        ), color=0xe74c3c)
-    await ctx.send(embed=embed, delete_after=8)
+    BOT_BLOCKED_CHANNELS.setdefault(gid, set()).add(target.id)
+    persist_bot_block_channel(gid, target.id)
+
+    hidden, failed = await _hide_channel_from_bots(target)
+
+    desc = (
+        f"Kênh {target.mention} đã **ẩn hoàn toàn** với bot khác.\n\n"
+        f"🙈 Bot bị ẩn kênh: **{hidden}**\n"
+        + (f"⚠️ Không chỉnh được: **{failed}** bot\n" if failed else "")
+        + "\n• Bot khác **không thấy, không đọc được** kênh này.\n"
+        "• Chỉ áp dụng cho **kênh này**, các kênh khác không bị ảnh hưởng.\n"
+        "• Lệnh `.` / `!` thường sẽ không được xử lý tại đây.\n"
+        "• Dùng `.unblockbot` để mở lại."
+    )
+    embed = ks_embed("🔒 ĐÃ CẤM BOT VÀO KÊNH", desc, color=C_ERR, user=ctx.author)
+    embed.add_field(
+        name="💡 Lưu ý",
+        value="Bot có quyền **Administrator** vẫn thấy được kênh (Discord cho phép bỏ qua mọi giới hạn). "
+              "Tin nhắn của chúng nếu xuất hiện sẽ bị KS-BOT xóa.",
+        inline=False,
+    )
+    await ctx.send(embed=embed, delete_after=15)
 
 
 @bot.hybrid_command(name='unblockbot', aliases=['dclbot'])
 @commands.check(lambda ctx: _server_owner_only(ctx))
 async def cmd_dclbot(ctx, channel: discord.TextChannel = None):
-    """Bỏ cấm lệnh bot trong kênh."""
+    """Bỏ cấm bot trong kênh."""
     target = channel or ctx.channel
     gid = ctx.guild.id if ctx.guild else 0
+
+    if ctx.interaction:
+        await ctx.defer(ephemeral=True)
+
     BOT_BLOCKED_CHANNELS.setdefault(gid, set()).discard(target.id)
     unpersist_bot_block_channel(gid, target.id)
-    embed = discord.Embed(
-        title="🔓 ĐÃ BỎ CẤM BOT",
-        description=f"Kênh {target.mention} đã được mở lại cho các lệnh bot.",
-        color=0x2ecc71)
-    await ctx.send(embed=embed, delete_after=6)
+    restored = await _show_channel_to_bots(target)
+
+    embed = ks_embed(
+        "🔓 ĐÃ MỞ KÊNH CHO BOT",
+        f"Kênh {target.mention} đã được mở lại.\n🙉 Bot được hiện lại kênh: **{restored}**",
+        color=C_OK, user=ctx.author,
+    )
+    await ctx.send(embed=embed, delete_after=8)
 
 
 @cmd_clbot.error
@@ -667,6 +815,24 @@ async def cmd_clbot_error(ctx, error):
 async def cmd_dclbot_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("❌ Chỉ **Owner Bot** hoặc **Chủ Server** mới được dùng `.unblockbot`.", delete_after=5)
+
+
+@bot.listen("on_member_join")
+async def _blockbot_new_bot_guard(member):
+    """Bot mới được mời vào server → tự ẩn khỏi các kênh đang bị cấm bot."""
+    if not member.bot or member.id == getattr(bot.user, "id", None):
+        return
+    for cid in list(BOT_BLOCKED_CHANNELS.get(member.guild.id, set())):
+        ch = member.guild.get_channel(cid)
+        if ch is None:
+            continue
+        try:
+            ow = ch.overwrites_for(member)
+            ow.view_channel = False
+            await ch.set_permissions(member, overwrite=ow, reason=BLOCK_REASON)
+            await asyncio.sleep(0.35)
+        except Exception:
+            pass
 
 
 # ================================================================
@@ -697,7 +863,9 @@ async def cmd_kenhksbot(ctx, channel: discord.TextChannel = None):
         channel = ctx.channel
     KS_BOT_CHANNELS[ctx.guild.id] = channel.id
     _save_ksbot_channels()
-    await ctx.send(f"✅ Đã đặt {channel.mention} là **kênh của KS-BOT**. Bot khác nhắn trong đây sẽ bị xóa.", delete_after=6)
+    embed = ks_embed("🤖 ĐÃ ĐẶT KÊNH KS-BOT", f"{channel.mention} là **kênh riêng của KS-BOT**.\nBot khác nhắn trong đây sẽ bị xóa.",
+                     color=C_OK, user=ctx.author)
+    await ctx.send(embed=embed, delete_after=8)
 
 
 @cmd_kenhksbot.error
@@ -825,32 +993,33 @@ async def cmd_kenhlixi(ctx, channel: discord.TextChannel = None):
 
     LIXI_CHANNELS[ctx.guild.id] = channel.id
     _save_lixi_channels()
-    await ctx.send(
-        f"🧧 **ĐÃ ĐẶT KÊNH LÌ XÌ**\n📍 Chỉ phát lì xì tại {channel.mention}\n"
-        "🔒 Bot sẽ không tự chọn kênh khác nữa.",
-        delete_after=8
+    embed = ks_embed(
+        "🧧 ĐÃ ĐẶT KÊNH LÌ XÌ",
+        f"📍 Chỉ phát lì xì tại {channel.mention}\n🔒 Bot sẽ không tự chọn kênh khác nữa.",
+        color=C_ERR, user=ctx.author,
     )
+    await ctx.send(embed=embed, delete_after=8)
 
 
 # ================================================================
-# 📖 HELP V2
+# 📖 HELP V3 — giao diện mới
 # ================================================================
 class HelpCategorySelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="🏠 Trang chính", value="home", description="Tổng quan bot & cách dùng"),
-            discord.SelectOption(label="🐺 Ma Sói", value="werewolf", description="Phòng, vai trò, manh mối"),
-            discord.SelectOption(label="🎮 Mini Game", value="games", description="Bầu Cua, Tài Xỉu, Mines, Tuxi"),
-            discord.SelectOption(label="💰 Kinh Tế", value="economy", description="Coin, daily, pay, top"),
-            discord.SelectOption(label="🛡️ Quản Trị", value="admin", description="Mute, khóa bot, quản lý"),
-            discord.SelectOption(label="✨ Tiện Ích", value="utility", description="Avatar, AFK, đổi tên, lì xì"),
+            discord.SelectOption(label="Trang chính", value="home", emoji="🏠", description="Tổng quan bot & cách dùng"),
+            discord.SelectOption(label="Ma Sói", value="werewolf", emoji="🐺", description="Phòng, vai trò, manh mối"),
+            discord.SelectOption(label="Mini Game", value="games", emoji="🎮", description="Bầu Cua, Tài Xỉu, Mines, Tuxi"),
+            discord.SelectOption(label="Kinh Tế", value="economy", emoji="💰", description="Coin, daily, pay, top"),
+            discord.SelectOption(label="Quản Trị", value="admin", emoji="🛡️", description="Mute, khóa bot, quản lý"),
+            discord.SelectOption(label="Tiện Ích", value="utility", emoji="✨", description="Avatar, AFK, đổi tên, lì xì"),
         ]
-        super().__init__(placeholder="Chọn mục trợ giúp", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="📂 Chọn mục trợ giúp...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction):
         pages = help_pages_v2()
         embed = pages.get(self.values[0], pages["home"])
-        embed.set_footer(text="💡 Dùng .help hoặc /help để mở lại menu • Một số lệnh cần quyền phù hợp")
+        embed.set_footer(text="💡 .help hoặc /help để mở lại menu • Một số lệnh cần quyền phù hợp")
         await interaction.response.edit_message(embed=embed, view=self.view)
 
 
@@ -860,33 +1029,38 @@ class HelpHomeView(discord.ui.View):
         self.add_item(HelpCategorySelect())
 
 
+_DIV = "━━━━━━━━━━━━━━━━━━━━"
+
+
 def help_pages_v2():
     home = discord.Embed(
-        title="🤖  K S - B O T   •   T R U N G   T Â M   T R Ợ   G I Ú P",
+        title="🤖 KS-BOT  ✦  TRUNG TÂM TRỢ GIÚP",
         description=(
-            "Chào mừng! Chọn **danh mục** ở menu ⬇️ bên dưới để xem chi tiết từng lệnh.\n"
-            "```⚡ Prefix : .        🆕 Slash : /```"
+            "Chào mừng bạn! Chọn **danh mục** ở menu bên dưới để xem chi tiết.\n"
+            f"{_DIV}\n"
+            "⚡ **Prefix:** `.`   ┃   🆕 **Slash:** `/`\n"
+            f"{_DIV}"
         ),
-        color=0x5865F2
+        color=C_INFO
     )
-    home.add_field(name="🐺 Ma Sói", value="Phòng chơi, vai trò, sự kiện", inline=True)
-    home.add_field(name="🎮 Mini Game", value="Bầu Cua, Tài Xỉu, Mines…", inline=True)
+    home.add_field(name="🐺 Ma Sói", value="Phòng chơi, vai trò", inline=True)
+    home.add_field(name="🎮 Mini Game", value="Bầu Cua, Tài Xỉu, Mines", inline=True)
     home.add_field(name="💰 Kinh Tế", value="Ví, lương, chuyển coin", inline=True)
-    home.add_field(name="🛡️ Quản Trị", value="🔒 Chỉ Owner Bot / Chủ Server", inline=True)
-    home.add_field(name="✨ Tiện Ích", value="Avatar, đổi tên, AFK…", inline=True)
-    home.add_field(name="\u200b", value="\u200b", inline=True)
+    home.add_field(name="🛡️ Quản Trị", value="🔒 Owner / Chủ Server", inline=True)
+    home.add_field(name="✨ Tiện Ích", value="Avatar, đổi tên, AFK", inline=True)
+    home.add_field(name="🧧 Sự kiện", value="Lì xì ngẫu nhiên", inline=True)
     home.add_field(
         name="💡 Mẹo nhanh",
         value=(
-            "• Gõ `/` rồi chọn lệnh — Discord tự gợi ý cú pháp.\n"
-            "• Một số lệnh `.` có thêm alias để gõ tắt.\n"
-            "• Ví dụ: `.coin` · `.masoi` · `/help`"
+            "› Gõ `/` rồi chọn lệnh — Discord tự gợi ý cú pháp.\n"
+            "› Nhiều lệnh có alias để gõ tắt.\n"
+            "› Ví dụ: `.coin` · `.masoi` · `/help`"
         ),
         inline=False
     )
     home.set_footer(text="KS-BOT  •  Chọn mục bên dưới để xem thêm ✨")
 
-    werewolf = discord.Embed(title="🐺  M A   S Ó I", color=0x8E44AD)
+    werewolf = discord.Embed(title="🐺 MA SÓI", description=_DIV, color=0x8E44AD)
     werewolf.add_field(
         name="📋 Lệnh",
         value=(
@@ -908,74 +1082,72 @@ def help_pages_v2():
         inline=False
     )
 
-    games = discord.Embed(title="🎮  M I N I   G A M E", color=0x2ECC71)
-    games.add_field(name="🦀 `.baucua` `/baucua`", value="Bầu Cua Tôm Cá", inline=True)
-    games.add_field(name="🎲 `.sicbo` `/sicbo`", value="Tài Xỉu (alias: `taixiu`)", inline=True)
-    games.add_field(name="💣 `.mine` `/mine`", value="Mines — `<tiền/all> [boom]`", inline=True)
-    games.add_field(name="✂️ `.rps` `/rps`", value="Kéo Búa Bao (alias: `tuxi`) — `<tiền/all>`", inline=True)
+    games = discord.Embed(title="🎮 MINI GAME", description=_DIV, color=C_OK)
+    games.add_field(name="🦀 Bầu Cua", value="`.baucua` `/baucua`\nBầu Cua Tôm Cá", inline=True)
+    games.add_field(name="🎲 Tài Xỉu", value="`.sicbo` `/sicbo`\nalias: `taixiu`", inline=True)
+    games.add_field(name="💣 Mines", value="`.mine` `/mine`\n`<tiền/all> [boom]`", inline=True)
+    games.add_field(name="✂️ Kéo Búa Bao", value="`.rps` `/rps`\nalias: `tuxi` • `<tiền/all>`", inline=True)
 
-    economy = discord.Embed(title="💰  K I N H   T Ế", color=0xF1C40F)
-    economy.add_field(name="👛 `.coin` `/coin`", value="Xem số dư ví", inline=True)
-    economy.add_field(name="📅 `.daily` `/daily`", value="Nhận lương hằng ngày", inline=True)
-    economy.add_field(name="🏆 `.top` `/top`", value="Bảng xếp hạng đại gia", inline=True)
-    economy.add_field(name="💸 `.pay` `/pay`", value="`@user <tiền/all>` — Chuyển coin", inline=False)
+    economy = discord.Embed(title="💰 KINH TẾ", description=_DIV, color=C_GOLD)
+    economy.add_field(name="👛 Ví", value="`.coin` `/coin`\nXem số dư", inline=True)
+    economy.add_field(name="📅 Lương", value="`.daily` `/daily`\nNhận mỗi ngày", inline=True)
+    economy.add_field(name="🏆 Xếp hạng", value="`.top` `/top`\nBảng đại gia", inline=True)
+    economy.add_field(name="💸 Chuyển coin", value="`.pay @user <tiền/all>` `/pay`", inline=False)
     economy.add_field(
         name="🧧 Lì xì server",
-        value="Xuất hiện ngẫu nhiên toàn server • Mỗi người nhận **1 lần/đợt** • Tối đa **1,000,000** 🪙 • Đợt mới ra thì đợt cũ hết hạn.",
+        value="Xuất hiện ngẫu nhiên • Mỗi người nhận **1 lần/đợt** • Tối đa **1,000,000** 🪙 • Đợt mới ra thì đợt cũ hết hạn.",
         inline=False
     )
 
     admin = discord.Embed(
-        title="🛡️  Q U Ả N   T R Ị",
-        description="🔒 **Toàn bộ lệnh dưới đây chỉ dùng được bởi Owner Bot hoặc Chủ Server.**",
-        color=0xE74C3C
+        title="🛡️ QUẢN TRỊ",
+        description=f"🔒 **Chỉ Owner Bot hoặc Chủ Server dùng được.**\n{_DIV}",
+        color=C_ERR
     )
     admin.add_field(
         name="🔇 Xử lý thành viên",
         value=(
-            "`.gag @user` `/gag` — Khóa mõm 5 phút (alias: `khoamom`)\n"
-            "`.mute @user <10p/1h/1d>` `/mute` — Khóa chat (alias: `khoachat`, `timeout`)\n"
-            "`.unmute @user` `/unmute` — Gỡ mute/khóa mõm (alias: `ungag`, `unkhoamom`)\n"
-            "`.kick @user [lý do]` `/kick` — Kick khỏi server\n"
-            "`.ban @user [lý do]` `/ban` — Ban khỏi server\n"
-            "`.unban <user_id>` `/unban` — Gỡ ban theo ID"
+            "`.gag @user` — Khóa mõm 5 phút (`khoamom`)\n"
+            "`.mute @user <10p/1h/1d>` — Khóa chat (`khoachat`, `timeout`)\n"
+            "`.unmute @user` — Gỡ mute (`ungag`, `unkhoamom`)\n"
+            "`.kick @user [lý do]` — Kick khỏi server\n"
+            "`.ban @user [lý do]` — Ban khỏi server\n"
+            "`.unban <user_id>` — Gỡ ban theo ID"
         ),
         inline=False
     )
     admin.add_field(
         name="🧹 Kênh & tin nhắn",
         value=(
-            "`.clear [@user] <số|1p|1h|1d>` `/clear` — Xóa tin nhắn\n"
-            "`.delreply` `/delreply` — Reply rồi xóa cả 2 tin (alias: `xtn`)\n"
-            "`.blockbot [#kênh...]` `/blockbot` — Cấm lệnh bot & xóa bot khác trong kênh (alias: `clbot`)\n"
-            "`.unblockbot [#kênh...]` `/unblockbot` — Bỏ cấm (alias: `dclbot`)\n"
-            "`.ksbotchannel #kênh` `/ksbotchannel` — Đặt kênh riêng cho KS-BOT (alias: `kenhksbot`)\n"
-            "`.lixichannel #kênh` `/lixichannel` — Chọn kênh phát lì xì (alias: `kenhlixi`)"
+            "`.clear [@user] <số|1p|1h|1d>` — Xóa tin nhắn\n"
+            "`.delreply` — Reply rồi xóa cả 2 tin (`xtn`)\n"
+            "`.blockbot [#kênh]` — **Ẩn kênh với bot khác** (`clbot`)\n"
+            "`.unblockbot [#kênh]` — Mở lại kênh (`dclbot`)\n"
+            "`.ksbotchannel #kênh` — Kênh riêng KS-BOT (`kenhksbot`)\n"
+            "`.lixichannel #kênh` — Kênh phát lì xì (`kenhlixi`)"
         ),
         inline=False
     )
     admin.add_field(
         name="🎭 Vai trò",
         value=(
-            "`.addrole @user @role` `/addrole` — Thêm role\n"
-            "`.delrole @user @role` `/delrole` — Gỡ role"
+            "`.addrole @user @role` — Thêm role\n"
+            "`.delrole @user @role` — Gỡ role"
         ),
         inline=False
     )
-    admin.set_footer(text="👑 Owner Bot luôn bypass mọi giới hạn • ID Owner nằm gần đầu file bot.py")
+    admin.set_footer(text="👑 Owner Bot luôn bypass mọi giới hạn")
 
-    utility = discord.Embed(title="✨  T I Ệ N   Í C H", color=0x9B59B6)
-    utility.add_field(name="🖼️ `.av [@user]` `/av`", value="Xem avatar", inline=True)
-    utility.add_field(name="✏️ `.nickname <tên>` `/nickname`", value="Đổi biệt danh (alias: `name`)", inline=True)
-    utility.add_field(name="💤 `.afk [lý do]` `/afk`", value="Bật chế độ AFK", inline=True)
-    utility.add_field(name="📖 `.help` `/help`", value="Mở menu này", inline=True)
-    utility.add_field(name="👛 `.coin` `/coin`", value="Xem số dư", inline=True)
-    utility.add_field(name="📅 `.daily` `/daily`", value="Nhận lương", inline=True)
-    utility.add_field(name="🏆 `.top` `/top`", value="Bảng xếp hạng", inline=True)
-    utility.add_field(name="💸 `.pay @user` `/pay`", value="Chuyển coin", inline=True)
+    utility = discord.Embed(title="✨ TIỆN ÍCH", description=_DIV, color=0x9B59B6)
+    utility.add_field(name="🖼️ Avatar", value="`.av [@user]` `/av`", inline=True)
+    utility.add_field(name="✏️ Đổi tên", value="`.nickname <tên>`\nalias: `name`", inline=True)
+    utility.add_field(name="💤 AFK", value="`.afk [lý do]` `/afk`", inline=True)
+    utility.add_field(name="📖 Trợ giúp", value="`.help` `/help`", inline=True)
+    utility.add_field(name="👛 Ví", value="`.coin` `/coin`", inline=True)
+    utility.add_field(name="📅 Lương", value="`.daily` `/daily`", inline=True)
     utility.add_field(
         name="🔒 Ghi chú",
-        value="Khi kênh bị `.blockbot` khóa, các lệnh **quản trị / AFK / clear / delreply** vẫn dùng được bình thường.",
+        value="Khi kênh bị `.blockbot`, các lệnh **quản trị / AFK / clear / delreply** của chủ vẫn dùng được.",
         inline=False
     )
 
@@ -1022,7 +1194,7 @@ async def on_member_update(before, after):
 _BLOCKED_CHANNEL_ALLOWED_COMMANDS = {
     "afk", "xtn", "clear", "addrole", "delrole", "kenhlixi",
     "khoamom", "unkhoamom", "khoachat", "mute", "timeout", "unmute",
-    "ban", "unban", "kick", "clbot", "dclbot",
+    "ban", "unban", "kick", "clbot", "dclbot", "blockbot", "unblockbot",
 }
 
 
@@ -1038,6 +1210,7 @@ async def on_message(message):
     # --- Kênh bị cấm bot ---
     if message.guild and message.channel.id in BOT_BLOCKED_CHANNELS.get(message.guild.id, set()):
         if message.author.bot:
+            # Dự phòng: bot có quyền Administrator vẫn thấy kênh → xóa tin của nó.
             if message.author.id != getattr(bot.user, "id", None):
                 try:
                     await message.delete()
