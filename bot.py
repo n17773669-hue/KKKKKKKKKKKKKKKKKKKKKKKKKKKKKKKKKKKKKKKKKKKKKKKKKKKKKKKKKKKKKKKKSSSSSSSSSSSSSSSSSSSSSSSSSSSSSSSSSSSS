@@ -684,6 +684,7 @@ def load_persisted_bot_blocks():
 
 
 load_persisted_bot_blocks()
+bot.blocked_channels = BOT_BLOCKED_CHANNELS  # cho các extension (autoreply...) dùng chung
 
 
 def is_bot_command_message(message):
@@ -1136,6 +1137,7 @@ class HelpCategorySelect(discord.ui.Select):
             discord.SelectOption(label="Kinh Tế", value="economy", emoji="💰", description="Coin, daily, pay, top"),
             discord.SelectOption(label="Quản Trị", value="admin", emoji="🛡️", description="Mute, khóa bot, quản lý"),
             discord.SelectOption(label="Tiện Ích", value="utility", emoji="✨", description="Avatar, AFK, đổi tên, lì xì"),
+            discord.SelectOption(label="Chào & Tự trả lời", value="welcome", emoji="👋", description="Chào thành viên mới, bot tự reply"),
         ]
         super().__init__(placeholder="📂 Chọn mục trợ giúp...", min_values=1, max_values=1, options=options)
 
@@ -1172,6 +1174,9 @@ def help_pages_v2():
     home.add_field(name="🛡️ Quản Trị", value="🔒 Owner / Chủ Server", inline=True)
     home.add_field(name="✨ Tiện Ích", value="Avatar, đổi tên, AFK", inline=True)
     home.add_field(name="🧧 Sự kiện", value="Lì xì ngẫu nhiên", inline=True)
+    home.add_field(name="👋 Chào & Trả lời", value="Embed chào, bot tự reply", inline=True)
+    home.add_field(name="\u200b", value="\u200b", inline=True)
+    home.add_field(name="\u200b", value="\u200b", inline=True)
     home.add_field(
         name="💡 Mẹo nhanh",
         value=(
@@ -1282,9 +1287,47 @@ def help_pages_v2():
         inline=False
     )
 
+    welcome = discord.Embed(
+        title="👋 CHÀO THÀNH VIÊN & TỰ TRẢ LỜI",
+        description=f"🔑 **Admin / Mod có quyền quản lý máy chủ dùng được.**\n{_DIV}",
+        color=C_INFO
+    )
+    welcome.add_field(
+        name="👋 Lời chào thành viên mới",
+        value=(
+            "`.welcome` `/welcome` — Xem cài đặt\n"
+            "`.welcome channel #kênh` — Đặt kênh chào\n"
+            "`.welcome message <chữ>` — Dòng chữ trên cùng\n"
+            "`.welcome text <chữ>` — Nội dung nhiều chữ trong embed\n"
+            "`.welcome image <link>` — Ảnh/GIF lớn ở dưới (`off` để xóa)\n"
+            "`.welcome color <#hex>` — Màu embed\n"
+            "`.welcome dm on|off` — Gửi thêm vào tin nhắn riêng\n"
+            "`.welcome toggle on|off` — Bật/tắt\n"
+            "`.welcome test` — Xem thử ngay\n"
+            "`.welcome reset` — Về mặc định"
+        ),
+        inline=False
+    )
+    welcome.add_field(
+        name="🏷️ Biến dùng trong chữ",
+        value="`{user}` tag người mới • `{name}` tên • `{server}` tên server • `{count}` số thành viên • `\\n` xuống dòng",
+        inline=False
+    )
+    welcome.add_field(
+        name="💬 Tự trả lời (bot reply + ping)",
+        value=(
+            "`.autoreply add ai hỏi | tao hỏi` — Tin **chứa** câu đó → bot reply\n"
+            "`.autoreply addexact =)) | =))` — Tin phải **y hệt** mới reply\n"
+            "`.autoreply` — Xem danh sách • `.autoreply remove <số>` — Xóa\n"
+            "`.autoreply clear` — Xóa hết (alias: `trl`)"
+        ),
+        inline=False
+    )
+
     return {
         "home": home, "werewolf": werewolf, "games": games,
         "economy": economy, "admin": admin, "utility": utility,
+        "welcome": welcome,
     }
 
 
@@ -1326,6 +1369,7 @@ _BLOCKED_CHANNEL_ALLOWED_COMMANDS = {
     "afk", "xtn", "clear", "addrole", "delrole", "kenhlixi",
     "khoamom", "unkhoamom", "khoachat", "mute", "timeout", "unmute",
     "ban", "unban", "kick", "clbot", "dclbot", "blockbot", "unblockbot", "lock", "unlock",
+    "welcome", "chao", "autoreply", "trl", "tutraloi",
 }
 
 
@@ -1589,6 +1633,8 @@ async def main():
         await bot.load_extension("casino")
         await bot.load_extension("top")
         await bot.load_extension("masoi")
+        await bot.load_extension("welcome")
+        await bot.load_extension("autoreply")
 
         asyncio.create_task(dashboard_stats_loop())
         asyncio.create_task(dashboard_outbox_loop())
