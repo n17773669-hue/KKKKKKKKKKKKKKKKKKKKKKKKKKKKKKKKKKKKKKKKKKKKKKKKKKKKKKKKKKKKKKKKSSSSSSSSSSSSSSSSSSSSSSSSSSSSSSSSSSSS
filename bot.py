@@ -691,10 +691,9 @@ def is_bot_command_message(message):
 
 
 async def _hide_channel_from_bots(channel):
-    """Ẩn kênh khỏi mọi bot khác (chỉ trong kênh này). Trả về (số bot đã ẩn, số lỗi)."""
+    """Ẩn kênh khỏi mọi bot khác (chỉ trong kênh này), chạy song song cho nhanh."""
     guild = channel.guild
     me = guild.me
-    hidden, failed = 0, 0
 
     # KS-BOT luôn giữ quyền thấy + nhắn trong kênh để còn nhận lệnh quản trị.
     try:
@@ -705,45 +704,50 @@ async def _hide_channel_from_bots(channel):
     except Exception:
         pass
 
-    for m in list(guild.members):
-        if not m.bot or m.id == me.id:
-            continue
+    bots = [m for m in guild.members if m.bot and m.id != me.id]
+    already = sum(1 for m in bots if channel.overwrites_for(m).view_channel is False)
+    todo = [m for m in bots if channel.overwrites_for(m).view_channel is not False]
+
+    async def _one(m):
         try:
             ow = channel.overwrites_for(m)
-            if ow.view_channel is False:
-                hidden += 1
-                continue
             ow.view_channel = False
             await channel.set_permissions(m, overwrite=ow, reason=BLOCK_REASON)
-            hidden += 1
-            await asyncio.sleep(0.35)  # tránh rate limit
+            return True
         except Exception:
-            failed += 1
-    return hidden, failed
+            return False
+
+    results = await asyncio.gather(*[_one(m) for m in todo]) if todo else []
+    ok = sum(1 for r in results if r)
+    return already + ok, len(results) - ok
 
 
 async def _show_channel_to_bots(channel):
     """Gỡ quyền ẩn đã đặt ở kênh này cho các bot. Trả về số bot đã mở lại."""
     guild = channel.guild
     me = guild.me
-    restored = 0
-    for m in list(guild.members):
-        if not m.bot or m.id == me.id:
-            continue
+    todo = [m for m in guild.members
+            if m.bot and m.id != me.id and channel.overwrites_for(m).view_channel is False]
+
+    async def _one(m):
         try:
             ow = channel.overwrites_for(m)
-            if ow.view_channel is not False:
-                continue
             ow.view_channel = None
-            if ow.is_empty():
-                await channel.set_permissions(m, overwrite=None, reason=BLOCK_REASON)
-            else:
-                await channel.set_permissions(m, overwrite=ow, reason=BLOCK_REASON)
-            restored += 1
-            await asyncio.sleep(0.35)
+            await channel.set_permissions(m, overwrite=(None if ow.is_empty() else ow), reason=BLOCK_REASON)
+            return True
         except Exception:
-            pass
-    return restored
+            return False
+
+    results = await asyncio.gather(*[_one(m) for m in todo]) if todo else []
+    return sum(1 for r in results if r)
+
+
+async def _delete_later(msg, seconds):
+    await asyncio.sleep(seconds)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
 
 
 @bot.hybrid_command(name='blockbot', aliases=['clbot'])
@@ -755,12 +759,12 @@ async def cmd_clbot(ctx, channel: discord.TextChannel = None):
     if me is None or not (me.guild_permissions.manage_roles or me.guild_permissions.manage_channels or me.guild_permissions.administrator):
         return await ctx.send("❌ KS-BOT thiếu quyền **Quản lý vai trò** (Manage Roles) để chỉnh quyền kênh.", delete_after=8)
 
-    if ctx.interaction:
-        await ctx.defer(ephemeral=True)
-
     gid = ctx.guild.id if ctx.guild else 0
     BOT_BLOCKED_CHANNELS.setdefault(gid, set()).add(target.id)
     persist_bot_block_channel(gid, target.id)
+
+    # Phản hồi NGAY, xử lý xong rồi sửa lại tin nhắn.
+    msg = await ctx.send(embed=ks_embed("🔒 ĐANG CẤM BOT...", f"Đang ẩn {target.mention} với bot khác ⏳", color=C_GOLD, user=ctx.author))
 
     hidden, failed = await _hide_channel_from_bots(target)
 
@@ -769,18 +773,16 @@ async def cmd_clbot(ctx, channel: discord.TextChannel = None):
         f"🙈 Bot bị ẩn kênh: **{hidden}**\n"
         + (f"⚠️ Không chỉnh được: **{failed}** bot\n" if failed else "")
         + "\n• Bot khác **không thấy, không đọc được** kênh này.\n"
-        "• Chỉ áp dụng cho **kênh này**, các kênh khác không bị ảnh hưởng.\n"
-        "• Lệnh `.` / `!` thường sẽ không được xử lý tại đây.\n"
+        "• Bot nào vẫn nhắn được → tin nhắn bị **xóa ngay**.\n"
+        "• Chỉ áp dụng cho **kênh này**.\n"
         "• Dùng `.unblockbot` để mở lại."
     )
     embed = ks_embed("🔒 ĐÃ CẤM BOT VÀO KÊNH", desc, color=C_ERR, user=ctx.author)
-    embed.add_field(
-        name="💡 Lưu ý",
-        value="Bot có quyền **Administrator** vẫn thấy được kênh (Discord cho phép bỏ qua mọi giới hạn). "
-              "Tin nhắn của chúng nếu xuất hiện sẽ bị KS-BOT xóa.",
-        inline=False,
-    )
-    await ctx.send(embed=embed, delete_after=15)
+    try:
+        await msg.edit(embed=embed)
+    except Exception:
+        await ctx.send(embed=embed)
+    asyncio.create_task(_delete_later(msg, 15))
 
 
 @bot.hybrid_command(name='unblockbot', aliases=['dclbot'])
@@ -790,19 +792,21 @@ async def cmd_dclbot(ctx, channel: discord.TextChannel = None):
     target = channel or ctx.channel
     gid = ctx.guild.id if ctx.guild else 0
 
-    if ctx.interaction:
-        await ctx.defer(ephemeral=True)
-
     BOT_BLOCKED_CHANNELS.setdefault(gid, set()).discard(target.id)
     unpersist_bot_block_channel(gid, target.id)
-    restored = await _show_channel_to_bots(target)
 
+    msg = await ctx.send(embed=ks_embed("🔓 ĐANG MỞ KÊNH...", f"Đang mở {target.mention} cho bot ⏳", color=C_GOLD, user=ctx.author))
+    restored = await _show_channel_to_bots(target)
     embed = ks_embed(
         "🔓 ĐÃ MỞ KÊNH CHO BOT",
         f"Kênh {target.mention} đã được mở lại.\n🙉 Bot được hiện lại kênh: **{restored}**",
         color=C_OK, user=ctx.author,
     )
-    await ctx.send(embed=embed, delete_after=8)
+    try:
+        await msg.edit(embed=embed)
+    except Exception:
+        await ctx.send(embed=embed)
+    asyncio.create_task(_delete_later(msg, 10))
 
 
 @cmd_clbot.error
@@ -830,9 +834,128 @@ async def _blockbot_new_bot_guard(member):
             ow = ch.overwrites_for(member)
             ow.view_channel = False
             await ch.set_permissions(member, overwrite=ow, reason=BLOCK_REASON)
-            await asyncio.sleep(0.35)
         except Exception:
             pass
+
+
+# ================================================================
+# 🔐 KHÓA / MỞ KÊNH (.lock / .unlock) — không ai chat được trong kênh
+# ================================================================
+def _ensure_lock_table():
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("CREATE TABLE IF NOT EXISTS channel_locks (guild_id INTEGER, channel_id INTEGER, prev INTEGER, PRIMARY KEY (guild_id, channel_id))")
+    conn.commit()
+    conn.close()
+
+
+def _lock_get(guild_id, channel_id):
+    try:
+        _ensure_lock_table()
+        conn = sqlite3.connect(DB_NAME)
+        row = conn.execute("SELECT prev FROM channel_locks WHERE guild_id=? AND channel_id=?", (guild_id, channel_id)).fetchone()
+        conn.close()
+        return row[0] if row else None
+    except Exception:
+        return None
+
+
+def _lock_set(guild_id, channel_id, prev):
+    try:
+        _ensure_lock_table()
+        conn = sqlite3.connect(DB_NAME)
+        conn.execute("INSERT OR IGNORE INTO channel_locks (guild_id, channel_id, prev) VALUES (?, ?, ?)", (guild_id, channel_id, prev))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _lock_del(guild_id, channel_id):
+    try:
+        _ensure_lock_table()
+        conn = sqlite3.connect(DB_NAME)
+        conn.execute("DELETE FROM channel_locks WHERE guild_id=? AND channel_id=?", (guild_id, channel_id))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def _bot_can_edit_perms(me):
+    return me is not None and (me.guild_permissions.manage_roles or me.guild_permissions.manage_channels or me.guild_permissions.administrator)
+
+
+@bot.hybrid_command(name='lock')
+@commands.check(lambda ctx: _server_owner_only(ctx))
+async def cmd_lock(ctx, channel: discord.TextChannel = None):
+    """Khóa kênh: mọi người không chat được."""
+    target = channel or ctx.channel
+    if not _bot_can_edit_perms(ctx.guild.me):
+        return await ctx.send("❌ KS-BOT thiếu quyền **Quản lý vai trò** (Manage Roles) để khóa kênh.", delete_after=8)
+
+    everyone = ctx.guild.default_role
+    ow = target.overwrites_for(everyone)
+    if _lock_get(ctx.guild.id, target.id) is not None:
+        return await ctx.send(embed=ks_embed("🔒 KÊNH ĐÃ KHÓA SẴN", f"{target.mention} đang bị khóa rồi.", color=C_GOLD, user=ctx.author), delete_after=6)
+
+    prev = -1 if ow.send_messages is None else (1 if ow.send_messages else 0)
+    _lock_set(ctx.guild.id, target.id, prev)
+    try:
+        # KS-BOT vẫn phải nhắn được để còn báo kết quả / mở khóa
+        await target.set_permissions(ctx.guild.me, send_messages=True, reason=f"Lock bởi {ctx.author}")
+        ow.send_messages = False
+        await target.set_permissions(everyone, overwrite=ow, reason=f"Lock bởi {ctx.author}")
+    except Exception as e:
+        _lock_del(ctx.guild.id, target.id)
+        return await ctx.send(f"❌ Không thể khóa kênh: `{type(e).__name__}`", delete_after=6)
+
+    embed = ks_embed(
+        "🔒 ĐÃ KHÓA KÊNH",
+        f"{target.mention} đã bị **khóa**.\n\n• Thành viên thường **không thể chat** trong kênh này.\n• Dùng `.unlock` để mở lại.",
+        color=C_ERR, user=ctx.author,
+    )
+    await ctx.send(embed=embed)
+
+
+@bot.hybrid_command(name='unlock')
+@commands.check(lambda ctx: _server_owner_only(ctx))
+async def cmd_unlock(ctx, channel: discord.TextChannel = None):
+    """Mở khóa kênh."""
+    target = channel or ctx.channel
+    if not _bot_can_edit_perms(ctx.guild.me):
+        return await ctx.send("❌ KS-BOT thiếu quyền **Quản lý vai trò** (Manage Roles) để mở khóa kênh.", delete_after=8)
+
+    prev = _lock_get(ctx.guild.id, target.id)
+    everyone = ctx.guild.default_role
+    ow = target.overwrites_for(everyone)
+    if prev is None and ow.send_messages is not False:
+        return await ctx.send(embed=ks_embed("🔓 KÊNH ĐANG MỞ", f"{target.mention} không bị khóa.", color=C_GOLD, user=ctx.author), delete_after=6)
+
+    ow.send_messages = True if prev == 1 else (False if prev == 0 else None)
+    try:
+        await target.set_permissions(everyone, overwrite=(None if ow.is_empty() else ow), reason=f"Unlock bởi {ctx.author}")
+        if target.id not in BOT_BLOCKED_CHANNELS.get(ctx.guild.id, set()):
+            me_ow = target.overwrites_for(ctx.guild.me)
+            me_ow.send_messages = None
+            await target.set_permissions(ctx.guild.me, overwrite=(None if me_ow.is_empty() else me_ow), reason=f"Unlock bởi {ctx.author}")
+    except Exception as e:
+        return await ctx.send(f"❌ Không thể mở khóa kênh: `{type(e).__name__}`", delete_after=6)
+
+    _lock_del(ctx.guild.id, target.id)
+    embed = ks_embed("🔓 ĐÃ MỞ KHÓA KÊNH", f"{target.mention} đã **mở lại**, mọi người chat bình thường.", color=C_OK, user=ctx.author)
+    await ctx.send(embed=embed)
+
+
+@cmd_lock.error
+async def cmd_lock_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ Chỉ **Owner Bot** hoặc **Chủ Server** mới được dùng `.lock`.", delete_after=5)
+
+
+@cmd_unlock.error
+async def cmd_unlock_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("❌ Chỉ **Owner Bot** hoặc **Chủ Server** mới được dùng `.unlock`.", delete_after=5)
 
 
 # ================================================================
@@ -1129,6 +1252,14 @@ def help_pages_v2():
         inline=False
     )
     admin.add_field(
+        name="🔐 Khóa kênh",
+        value=(
+            "`.lock [#kênh]` `/lock` — 🔒 Khóa kênh, không ai chat được\n"
+            "`.unlock [#kênh]` `/unlock` — 🔓 Mở khóa, chat lại bình thường"
+        ),
+        inline=False
+    )
+    admin.add_field(
         name="🎭 Vai trò",
         value=(
             "`.addrole @user @role` — Thêm role\n"
@@ -1194,7 +1325,7 @@ async def on_member_update(before, after):
 _BLOCKED_CHANNEL_ALLOWED_COMMANDS = {
     "afk", "xtn", "clear", "addrole", "delrole", "kenhlixi",
     "khoamom", "unkhoamom", "khoachat", "mute", "timeout", "unmute",
-    "ban", "unban", "kick", "clbot", "dclbot", "blockbot", "unblockbot",
+    "ban", "unban", "kick", "clbot", "dclbot", "blockbot", "unblockbot", "lock", "unlock",
 }
 
 
