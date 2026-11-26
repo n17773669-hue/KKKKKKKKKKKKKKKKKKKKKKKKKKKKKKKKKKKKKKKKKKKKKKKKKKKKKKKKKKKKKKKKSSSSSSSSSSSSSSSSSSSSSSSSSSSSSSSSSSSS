@@ -6,7 +6,8 @@ VD: ai nhắn  =))   → bot reply  =))
 
 • Bot trả lời bằng REPLY và PING người đó.
 • Kênh bị khóa (/lock) bot vẫn chat được (tự cấp quyền cho bot nếu thiếu).
-• Không trả lời bot khác, không trả lời tin bắt đầu bằng . ! /, và bỏ qua kênh bị .blockbot.
+• Không trả lời bot khác, không trả lời tin bắt đầu bằng . ! /
+• Kênh bị .blockbot vẫn TRẢ LỜI BÌNH THƯỜNG (đã bỏ đoạn bỏ qua kênh block).
 • Chống spam: mỗi câu kích hoạt chỉ trả lời 1 lần / 6 giây / kênh.
 • Ai set được: Admin / Quản lý máy chủ / Quản lý kênh / Quản lý tin nhắn / Owner Bot / Chủ server.
 • Dữ liệu lưu ở autoreply_config.json → discord_storage.py tự backup lên #ksbot-config.
@@ -127,8 +128,7 @@ class AutoReplyCog(commands.Cog):
         rules = CFG.get(str(message.guild.id))
         if not rules:
             return
-        if message.channel.id in getattr(self.bot, "blocked_channels", {}).get(message.guild.id, set()):
-            return
+        # (đã bỏ đoạn bỏ qua kênh .blockbot → autoreply vẫn trả lời ở kênh block)
         rule = _find(rules, message.content)
         if not rule:
             return
@@ -150,10 +150,7 @@ class AutoReplyCog(commands.Cog):
             return
         rules = CFG.get(str(ctx.guild.id), [])
         if not rules:
-            return await ctx.send(embed=discord.Embed(
-                title="💬 TỰ TRẢ LỜI",
-                description="Chưa có câu nào.\nThêm: `.autoreply add ai hỏi | tao hỏi`",
-                color=0x5865F2))
+            return await ctx.send("💬 Chưa có câu tự trả lời nào.\nThêm: `.autoreply add ai hỏi | tao hỏi`")
         lines = []
         for i, r in enumerate(rules, 1):
             t = r["t"].replace("`", "'")
@@ -177,16 +174,14 @@ class AutoReplyCog(commands.Cog):
             if x["t"].casefold() == t.casefold() and bool(x.get("exact")) == exact:
                 x["r"] = r
                 _save()
-                return await ctx.send(embed=discord.Embed(
-                    title="✅ ĐÃ CẬP NHẬT", description=f"`{t}` ➜ `{r[:100]}`", color=0x2ECC71))
+                return await ctx.send(f"✅ Đã cập nhật: `{t}` ➜ `{r[:100]}`", delete_after=8)
         if len(rules) >= MAX_RULES:
             return await ctx.send(f"❌ Tối đa **{MAX_RULES}** câu. Xóa bớt bằng `.autoreply remove`.", delete_after=6)
         rules.append({"t": t, "r": r, "exact": exact})
         _save()
-        await ctx.send(embed=discord.Embed(
-            title="✅ ĐÃ THÊM TỰ TRẢ LỜI",
-            description=f"{'Tin phải y hệt' if exact else 'Tin chứa'} `{t}`\n➜ bot reply: `{r[:100]}`",
-            color=0x2ECC71))
+        await ctx.send(
+            f"✅ Đã thêm: {'tin phải y hệt' if exact else 'tin chứa'} `{t}` ➜ bot reply `{r[:100]}`",
+            delete_after=8)
 
     @autoreply.command(name="add")
     async def ar_add(self, ctx, *, noi_dung: str):
@@ -217,7 +212,7 @@ class AutoReplyCog(commands.Cog):
             return await ctx.send("❌ Không tìm thấy. Xem số thứ tự bằng `.autoreply`.", delete_after=6)
         gone = rules.pop(idx)
         _save()
-        await ctx.send(embed=discord.Embed(title="🗑️ ĐÃ XÓA", description=f"`{gone['t']}`", color=0xE74C3C))
+        await ctx.send(f"🗑️ Đã xóa `{gone['t']}`", delete_after=6)
 
     @autoreply.command(name="clear")
     async def ar_clear(self, ctx):
@@ -226,7 +221,7 @@ class AutoReplyCog(commands.Cog):
             return
         CFG.pop(str(ctx.guild.id), None)
         _save()
-        await ctx.send(embed=discord.Embed(title="🗑️ ĐÃ XÓA HẾT", description="Không còn câu tự trả lời nào.", color=0xE74C3C))
+        await ctx.send("🗑️ Đã xóa hết câu tự trả lời.", delete_after=6)
 
 
 async def setup(bot):
