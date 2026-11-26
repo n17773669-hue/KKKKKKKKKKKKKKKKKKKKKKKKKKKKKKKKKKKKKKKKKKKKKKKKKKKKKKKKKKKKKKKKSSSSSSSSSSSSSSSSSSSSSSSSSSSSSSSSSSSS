@@ -1236,17 +1236,107 @@ async def cmd_kenhlixi(ctx, channel: discord.TextChannel = None):
 
 
 # ================================================================
-# 📖 HELP — hàng nút, có GIF, không dropdown
+# 📖 HELP — menu chọn danh mục + chọn lệnh + tìm kiếm (kiểu bot xịn)
+#    Trang chủ: tên/ảnh server ở trên cùng, THÔNG TIN VỀ BOT, avatar bot
+#    góc phải, banner GIF lớn. Menu 1 = danh mục, Menu 2 = lệnh.
+#    Nút: 🏠 Trang Chủ • 🔍 Tìm kiếm lệnh • ✖️ Đóng
 # ================================================================
-_DIV = "━━━━━━━━━━━━━━━━━━━━"
+# lệnh: (key, emoji, cách dùng, mô tả)
+HELP_DATA = {
+    "werewolf": dict(
+        emoji="🐺", label="Ma Sói", color=0x8E44AD,
+        short="Tạo phòng, vai trò, Trưởng Làng",
+        desc="Chơi Ma Sói ngay trong kênh chat với đầy đủ vai trò đặc biệt.",
+        items=[
+            ("masoi", "🐺", "`.masoi` `/masoi`", "Tạo phòng chơi Ma Sói."),
+            ("masoiroles", "🎭", "`.masoiroles` `/masoiroles`",
+             "Xem bộ vai trò: 💘 Cupid, 🛡️ Bảo Vệ (không bảo vệ 1 người 3 đêm liền), 🧪 Phù Thủy (Cứu/Độc), 🏹 Thợ Săn (bắn 1 phát khi chết)..."),
+            ("mav", "👑", "`.mav` `/mav`", "Trưởng Làng tự công khai danh tính."),
+        ]),
+    "games": dict(
+        emoji="🎮", label="Mini Game", color=C_OK,
+        short="Bầu Cua, Tài Xỉu, Mines, Kéo Búa Bao",
+        desc="Cược coin với bạn bè, thắng thua tính thẳng vào ví.",
+        items=[
+            ("baucua", "🦀", "`.baucua` `/baucua`", "Bầu Cua Tôm Cá."),
+            ("sicbo", "🎲", "`.sicbo` `/sicbo` • alias: `taixiu`", "Tài Xỉu."),
+            ("mine", "💣", "`.mine <tiền/all> [boom]` `/mine`", "Game dò mìn, mở càng nhiều ô càng lời."),
+            ("rps", "✂️", "`.rps <tiền/all>` `/rps` • alias: `tuxi`", "Kéo Búa Bao ăn coin."),
+        ]),
+    "economy": dict(
+        emoji="💰", label="Kinh Tế", color=C_GOLD,
+        short="Ví, lương, xếp hạng, chuyển coin, lì xì",
+        desc="Quản lý coin của bạn. 🧧 Lì xì server xuất hiện ngẫu nhiên, mỗi người nhận **1 lần/đợt**, tối đa **1,000,000** 🪙.",
+        items=[
+            ("coin", "👛", "`.coin` `/coin` • alias: `wallet`", "Xem số dư, level, streak."),
+            ("daily", "📅", "`.daily` `/daily`", "Nhận lương hằng ngày **+1,500** coin và **+100 EXP**."),
+            ("top", "🏆", "`.top` `/top`", "Bảng xếp hạng đại gia."),
+            ("pay", "💸", "`.pay @user <tiền/all>` `/pay`", "Chuyển coin cho người khác."),
+        ]),
+    "admin": dict(
+        emoji="🛡️", label="Quản Trị", color=C_ERR,
+        short="Mute, kick, ban, clear, khóa kênh, role",
+        desc="🔒 Chỉ **Owner Bot** hoặc **Chủ Server** dùng được.",
+        items=[
+            ("gag", "🤐", "`.gag @user` • alias: `khoamom`", "Khóa mõm 5 phút."),
+            ("mute", "🔇", "`.mute @user <10p/1h/1d>` • alias: `khoachat`, `timeout`", "Khóa chat theo thời gian."),
+            ("unmute", "🔊", "`.unmute @user` • alias: `ungag`, `unkhoamom`", "Gỡ mute."),
+            ("kick", "👢", "`.kick @user [lý do]`", "Kick khỏi server."),
+            ("ban", "🔨", "`.ban @user [lý do]`", "Ban khỏi server."),
+            ("unban", "🔓", "`.unban <user_id>`", "Gỡ ban theo ID."),
+            ("clear", "🧹", "`.clear [@user] <số|1p|1h|1d>`", "Xóa tin nhắn theo số lượng hoặc thời gian."),
+            ("delreply", "🗑️", "`.delreply` • alias: `xtn`", "Reply 1 tin rồi dùng lệnh để xóa cả 2 tin."),
+            ("blockbot", "🚫", "`.blockbot [#kênh]` • alias: `clbot`",
+             "Ẩn kênh với bot khác. Trong kênh đó chỉ còn `.av` `.afk` `.name` và autoreply."),
+            ("unblockbot", "✅", "`.unblockbot [#kênh]` • alias: `dclbot`", "Mở lại kênh cho bot."),
+            ("lock", "🔒", "`.lock [#kênh]` `/lock`", "Khóa kênh, không ai chat được."),
+            ("unlock", "🔓", "`.unlock [#kênh]` `/unlock`", "Mở khóa kênh."),
+            ("ksbotchannel", "🤖", "`.ksbotchannel #kênh` • alias: `kenhksbot`", "Đặt kênh riêng cho KS-BOT (bot khác nhắn sẽ bị xóa)."),
+            ("lixichannel", "🧧", "`.lixichannel #kênh` • alias: `kenhlixi`", "Chọn kênh phát lì xì."),
+            ("addrole", "➕", "`.addrole @user @role`", "Thêm role cho thành viên."),
+            ("delrole", "➖", "`.delrole @user @role`", "Gỡ role khỏi thành viên."),
+        ]),
+    "utility": dict(
+        emoji="✨", label="Tiện Ích", color=0x9B59B6,
+        short="Avatar, đổi tên, AFK, trợ giúp",
+        desc="Các lệnh nhỏ hay dùng. Kênh bị `.blockbot` vẫn dùng được `.av` `.afk` `.name`.",
+        items=[
+            ("av", "🖼️", "`.av [@user]` `/av` • alias: `avt`", "Xem ảnh đại diện HD."),
+            ("nickname", "✏️", "`.nickname <tên>` `/nickname` • alias: `name`", "Đổi biệt danh của bạn (tối đa 32 ký tự)."),
+            ("afk", "💤", "`.afk [lý do]` `/afk`", "Bật AFK, ai ping bạn bot sẽ báo lý do. Nhắn tin lại là tự tắt."),
+            ("help", "📖", "`.help` `/help`", "Mở menu trợ giúp này."),
+        ]),
+    "welcome": dict(
+        emoji="👋", label="Chào & Tự Trả Lời", color=C_INFO,
+        short="Welcome, autoreply",
+        desc="🔑 Admin / Mod có quyền quản lý máy chủ dùng được.\n"
+             "🏷️ Biến dùng trong chữ: `{user}` `{name}` `{server}` `{count}` `\\n`",
+        items=[
+            ("welcome", "👋", "`.welcome` `/welcome`",
+             "Xem cài đặt lời chào. Nhánh: `channel #kênh` • `message <chữ>` • `text <chữ>` • `image <link>` • "
+             "`color <#hex>` • `dm on|off` • `toggle on|off` • `test` • `reset`."),
+            ("autoreply", "💬", "`.autoreply add ai hỏi | tao hỏi`",
+             "Tin **chứa** câu đó → bot reply. `addexact` = phải y hệt. `remove <số>`, `clear` (alias `trl`), "
+             "gõ `.autoreply` để xem danh sách."),
+        ]),
+}
 
-HELP_PAGE_ORDER = [
-    ("home", "🏠"), ("werewolf", "🐺"), ("games", "🎮"), ("economy", "💰"),
-    ("admin", "🛡️"), ("utility", "✨"), ("welcome", "👋"),
-]
+
+def _help_guild_icon(guild):
+    return guild.icon.url if guild and guild.icon else None
 
 
-def help_pages_v2():
+def _help_decorate(e, guild, user):
+    """Tên + ảnh server ở dòng trên cùng, footer có ảnh server."""
+    if guild:
+        e.set_author(name=guild.name, icon_url=_help_guild_icon(guild))
+        e.set_footer(text=f"KS-BOT • Yêu cầu bởi {user.display_name}", icon_url=_help_guild_icon(guild))
+    else:
+        e.set_footer(text=f"KS-BOT • Yêu cầu bởi {user.display_name}")
+    return e
+
+
+def help_home_embed(guild, user):
     try:
         n_prefix = len(list(bot.walk_commands()))
         n_slash = len(bot.tree.get_commands())
@@ -1254,211 +1344,157 @@ def help_pages_v2():
         n_prefix = n_slash = 0
     lat = bot.latency
     ping = f"{round(lat * 1000)}ms" if lat == lat else "?"
-    home = discord.Embed(title="💤  KS-BOT  ✦  BẢNG LỆNH", color=C_INFO)
-    home.description = (
-        "### 📊 THÔNG TIN BOT\n"
+    total_cmds = sum(len(c["items"]) for c in HELP_DATA.values())
+
+    e = discord.Embed(title="💤 KS-BOT — TRUNG TÂM TRỢ GIÚP", color=C_INFO)
+    e.description = (
+        "**THÔNG TIN VỀ BOT**\n"
         f"> 👑 **Owner:** <@{OWNER_USER_ID}>\n"
-        f"> ⌨️ **Prefix:** `.` ({n_prefix} lệnh) · **Slash:** `/` ({n_slash} lệnh)\n"
-        f"> 🌐 **Server:** {len(bot.guilds)} · 🏓 **Ping:** {ping} · ⏱️ **Online:** {_fmt_uptime()}\n"
+        f"> ⌨️ **Prefix Commands:** `{n_prefix}` (`.`)\n"
+        f"> ⚡ **Slash Commands:** `{n_slash}` (`/`)\n"
+        f"> 🌐 **Server:** `{len(bot.guilds)}` • 🏓 **Ping:** `{ping}` • ⏱️ **Online:** `{_fmt_uptime()}`\n"
+        f"> 📚 **Lệnh trong menu:** `{total_cmds}`\n"
         "\n"
-        "### 🗂️ DANH MỤC\n"
-        "🐺 Ma Sói · 🎮 Mini Game · 💰 Kinh tế\n"
-        "🛡️ Quản trị · ✨ Tiện ích · 👋 Chào & Reply\n"
+        "🔥 **Hay dùng:** `.coin` `.daily` `.masoi` `.baucua` `.sicbo` `.mine` `.rps`\n"
         "\n"
-        "### 🔥 HAY DÙNG\n"
-        "`.coin` `.daily` `.masoi` `.baucua` `.sicbo` `.mine` `.rps`\n"
-        "\n"
-        "*Bấm nút bên dưới để chuyển trang.*"
+        "*Chọn một **danh mục** bên dưới để xem toàn bộ lệnh liên quan, "
+        "hoặc bấm 🔍 **Tìm kiếm** để tra cứu nhanh.*"
     )
     if bot.user:
-        home.set_thumbnail(url=bot.user.display_avatar.url)
-    home.set_image(url=_help_gif_ref())
-    home.set_footer(text="Nút xanh = trang đang xem • ✖️ để đóng")
-
-    werewolf = discord.Embed(title="🐺 MA SÓI", description=_DIV, color=0x8E44AD)
-    werewolf.add_field(
-        name="📋 Lệnh",
-        value=(
-            "`.masoi` `/masoi` — Tạo phòng chơi\n"
-            "`.masoiroles` `/masoiroles` — Xem bộ vai trò\n"
-            "`.mav` `/mav` — Trưởng Làng tự công khai"
-        ),
-        inline=False
-    )
-    werewolf.add_field(
-        name="🎭 Vai trò đặc biệt",
-        value=(
-            "💘 **Cupid** — hai người yêu biết nhau\n"
-            "🛡️ **Bảo Vệ** — không bảo vệ cùng 1 người 3 đêm liền\n"
-            "🧪 **Phù Thủy** — Cứu / Độc\n"
-            "🏹 **Thợ Săn** — bắn 1 phát khi chết\n"
-            "👑 **Trưởng Làng** — mỗi đêm chọn lộ diện hoặc ẩn danh"
-        ),
-        inline=False
-    )
-
-    games = discord.Embed(title="🎮 MINI GAME", description=_DIV, color=C_OK)
-    games.add_field(name="🦀 Bầu Cua", value="`.baucua` `/baucua`\nBầu Cua Tôm Cá", inline=True)
-    games.add_field(name="🎲 Tài Xỉu", value="`.sicbo` `/sicbo`\nalias: `taixiu`", inline=True)
-    games.add_field(name="💣 Mines", value="`.mine` `/mine`\n`<tiền/all> [boom]`", inline=True)
-    games.add_field(name="✂️ Kéo Búa Bao", value="`.rps` `/rps`\nalias: `tuxi` • `<tiền/all>`", inline=True)
-
-    economy = discord.Embed(title="💰 KINH TẾ", description=_DIV, color=C_GOLD)
-    economy.add_field(name="👛 Ví", value="`.coin` `/coin`\nXem số dư", inline=True)
-    economy.add_field(name="📅 Lương", value="`.daily` `/daily`\nNhận mỗi ngày", inline=True)
-    economy.add_field(name="🏆 Xếp hạng", value="`.top` `/top`\nBảng đại gia", inline=True)
-    economy.add_field(name="💸 Chuyển coin", value="`.pay @user <tiền/all>` `/pay`", inline=False)
-    economy.add_field(
-        name="🧧 Lì xì server",
-        value="Xuất hiện ngẫu nhiên • Mỗi người nhận **1 lần/đợt** • Tối đa **1,000,000** 🪙 • Đợt mới ra thì đợt cũ hết hạn.",
-        inline=False
-    )
-
-    admin = discord.Embed(
-        title="🛡️ QUẢN TRỊ",
-        description=f"🔒 **Chỉ Owner Bot hoặc Chủ Server dùng được.**\n{_DIV}",
-        color=C_ERR
-    )
-    admin.add_field(
-        name="🔇 Xử lý thành viên",
-        value=(
-            "`.gag @user` — Khóa mõm 5 phút (`khoamom`)\n"
-            "`.mute @user <10p/1h/1d>` — Khóa chat (`khoachat`, `timeout`)\n"
-            "`.unmute @user` — Gỡ mute (`ungag`, `unkhoamom`)\n"
-            "`.kick @user [lý do]` — Kick khỏi server\n"
-            "`.ban @user [lý do]` — Ban khỏi server\n"
-            "`.unban <user_id>` — Gỡ ban theo ID"
-        ),
-        inline=False
-    )
-    admin.add_field(
-        name="🧹 Kênh & tin nhắn",
-        value=(
-            "`.clear [@user] <số|1p|1h|1d>` — Xóa tin nhắn\n"
-            "`.delreply` — Reply rồi xóa cả 2 tin (`xtn`)\n"
-            "`.blockbot [#kênh]` — **Ẩn kênh với bot khác** (`clbot`)\n"
-            "`.unblockbot [#kênh]` — Mở lại kênh (`dclbot`)\n"
-            "`.ksbotchannel #kênh` — Kênh riêng KS-BOT (`kenhksbot`)\n"
-            "`.lixichannel #kênh` — Kênh phát lì xì (`kenhlixi`)"
-        ),
-        inline=False
-    )
-    admin.add_field(
-        name="🔐 Khóa kênh",
-        value=(
-            "`.lock [#kênh]` `/lock` — 🔒 Khóa kênh, không ai chat được\n"
-            "`.unlock [#kênh]` `/unlock` — 🔓 Mở khóa, chat lại bình thường"
-        ),
-        inline=False
-    )
-    admin.add_field(
-        name="🎭 Vai trò",
-        value=(
-            "`.addrole @user @role` — Thêm role\n"
-            "`.delrole @user @role` — Gỡ role"
-        ),
-        inline=False
-    )
-    admin.set_footer(text="👑 Owner Bot luôn bypass mọi giới hạn")
-
-    utility = discord.Embed(title="✨ TIỆN ÍCH", description=_DIV, color=0x9B59B6)
-    utility.add_field(name="🖼️ Avatar", value="`.av [@user]` `/av`", inline=True)
-    utility.add_field(name="✏️ Đổi tên", value="`.nickname <tên>`\nalias: `name`", inline=True)
-    utility.add_field(name="💤 AFK", value="`.afk [lý do]` `/afk`", inline=True)
-    utility.add_field(name="📖 Trợ giúp", value="`.help` `/help`", inline=True)
-    utility.add_field(name="👛 Ví", value="`.coin` `/coin`", inline=True)
-    utility.add_field(name="📅 Lương", value="`.daily` `/daily`", inline=True)
-    utility.add_field(
-        name="🔒 Ghi chú",
-        value=(
-            "Kênh bị `.blockbot` chỉ còn dùng được `.av` `.afk` `.name` và **autoreply**. "
-            "Người đang AFK bị ping/reply thì bot vẫn báo lý do."
-        ),
-        inline=False
-    )
-
-    welcome = discord.Embed(
-        title="👋 CHÀO THÀNH VIÊN & TỰ TRẢ LỜI",
-        description=f"🔑 **Admin / Mod có quyền quản lý máy chủ dùng được.**\n{_DIV}",
-        color=C_INFO
-    )
-    welcome.add_field(
-        name="👋 Lời chào thành viên mới",
-        value=(
-            "`.welcome` `/welcome` — Xem cài đặt\n"
-            "`.welcome channel #kênh` — Đặt kênh chào\n"
-            "`.welcome message <chữ>` — Dòng chữ trên cùng\n"
-            "`.welcome text <chữ>` — Nội dung nhiều chữ trong embed\n"
-            "`.welcome image <link>` — Ảnh/GIF lớn ở dưới (`off` để xóa)\n"
-            "`.welcome color <#hex>` — Màu embed\n"
-            "`.welcome dm on|off` — Gửi thêm vào tin nhắn riêng\n"
-            "`.welcome toggle on|off` — Bật/tắt\n"
-            "`.welcome test` — Xem thử ngay\n"
-            "`.welcome reset` — Về mặc định"
-        ),
-        inline=False
-    )
-    welcome.add_field(
-        name="🏷️ Biến dùng trong chữ",
-        value="`{user}` tag người mới • `{name}` tên • `{server}` tên server • `{count}` số thành viên • `\\n` xuống dòng",
-        inline=False
-    )
-    welcome.add_field(
-        name="💬 Tự trả lời (bot reply + ping)",
-        value=(
-            "`.autoreply add ai hỏi | tao hỏi` — Tin **chứa** câu đó → bot reply\n"
-            "`.autoreply addexact =)) | =))` — Tin phải **y hệt** mới reply\n"
-            "`.autoreply` — Xem danh sách • `.autoreply remove <số>` — Xóa\n"
-            "`.autoreply clear` — Xóa hết (alias: `trl`)"
-        ),
-        inline=False
-    )
-
-    return {
-        "home": home, "werewolf": werewolf, "games": games,
-        "economy": economy, "admin": admin, "utility": utility,
-        "welcome": welcome,
-    }
+        e.set_thumbnail(url=bot.user.display_avatar.url)   # avatar bot góc phải
+    e.set_image(url=_help_gif_ref())                       # banner lớn
+    return _help_decorate(e, guild, user)
 
 
-class HelpNavView(discord.ui.View):
-    def __init__(self, author_id, current="home"):
+def help_category_embed(guild, user, cat_key):
+    c = HELP_DATA[cat_key]
+    e = discord.Embed(title=f"{c['emoji']} {c['label'].upper()}", color=c["color"])
+    lines = [f"*{c['desc']}*", "", f"Danh mục này có **{len(c['items'])}** lệnh. Chọn lệnh ở menu dưới để xem chi tiết:", ""]
+    for _, emoji, usage, desc in c["items"]:
+        lines.append(f"{emoji} {usage}\n> {desc}")
+    e.description = "\n".join(lines)[:4000]
+    if bot.user:
+        e.set_thumbnail(url=bot.user.display_avatar.url)
+    return _help_decorate(e, guild, user)
+
+
+def help_command_embed(guild, user, cat_key, item_key):
+    c = HELP_DATA[cat_key]
+    item = next(i for i in c["items"] if i[0] == item_key)
+    _, emoji, usage, desc = item
+    e = discord.Embed(title=f"{emoji} {item_key.upper()}", color=c["color"])
+    e.description = f"*{desc}*"
+    e.add_field(name="📌 Cách dùng", value=usage, inline=False)
+    e.add_field(name="📂 Danh mục", value=f"{c['emoji']} {c['label']}", inline=True)
+    if cat_key == "admin":
+        e.add_field(name="🔒 Quyền", value="Owner Bot / Chủ Server", inline=True)
+    if bot.user:
+        e.set_thumbnail(url=bot.user.display_avatar.url)
+    return _help_decorate(e, guild, user)
+
+
+def help_search_embed(guild, user, query):
+    q = (query or "").lower().strip()
+    hits = []
+    for c in HELP_DATA.values():
+        for key, emoji, usage, desc in c["items"]:
+            if q in key.lower() or q in usage.lower() or q in desc.lower():
+                hits.append((emoji, usage, desc))
+    e = discord.Embed(title=f"🔍 KẾT QUẢ CHO “{query[:40]}”", color=C_INFO)
+    if hits:
+        body = "\n\n".join(f"{emoji} {usage}\n> {desc}" for emoji, usage, desc in hits[:10])
+        e.description = f"Tìm thấy **{len(hits)}** lệnh:\n\n{body}"[:4000]
+    else:
+        e.description = "😕 Không tìm thấy lệnh nào khớp. Thử từ khóa khác (vd: `mute`, `coin`, `sói`, `avatar`)."
+    if bot.user:
+        e.set_thumbnail(url=bot.user.display_avatar.url)
+    return _help_decorate(e, guild, user)
+
+
+class HelpCategorySelect(discord.ui.Select):
+    def __init__(self, current):
+        opts = [
+            discord.SelectOption(label=c["label"], value=k, emoji=c["emoji"],
+                                 description=c["short"][:100], default=(k == current))
+            for k, c in HELP_DATA.items()
+        ]
+        super().__init__(placeholder="📂 Chọn một danh mục để xem lệnh...", options=opts, row=0)
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        v.cat = self.values[0]
+        v.rebuild()
+        await v.show(interaction, help_category_embed(v.guild, v.user, v.cat))
+
+
+class HelpCommandSelect(discord.ui.Select):
+    def __init__(self, cat):
+        if cat:
+            opts = [discord.SelectOption(label=k, value=k, emoji=e, description=d[:100])
+                    for k, e, _, d in HELP_DATA[cat]["items"]]
+            super().__init__(placeholder="❓ Chọn lệnh để xem hướng dẫn...", options=opts, row=1)
+        else:
+            super().__init__(placeholder="❓ Hãy chọn danh mục trước...", row=1, disabled=True,
+                             options=[discord.SelectOption(label="—", value="none")])
+
+    async def callback(self, interaction: discord.Interaction):
+        v = self.view
+        await v.show(interaction, help_command_embed(v.guild, v.user, v.cat, self.values[0]))
+
+
+class HelpSearchModal(discord.ui.Modal, title="🔍 Tìm kiếm lệnh"):
+    query = discord.ui.TextInput(label="Từ khóa", placeholder="vd: mute, coin, sói, avatar...",
+                                 max_length=40, required=True)
+
+    def __init__(self, view):
+        super().__init__()
+        self.hv = view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await self.hv.show(interaction, help_search_embed(self.hv.guild, self.hv.user, str(self.query)))
+
+
+class HelpView(discord.ui.View):
+    def __init__(self, user, guild):
         super().__init__(timeout=180)
-        self.author_id = author_id
+        self.user = user
+        self.guild = guild
+        self.cat = None
         self.message = None
-        self._build(current)
+        self.rebuild()
 
-    def _build(self, current):
+    def rebuild(self):
         self.clear_items()
-        for i, (key, emoji) in enumerate(HELP_PAGE_ORDER):
-            btn = discord.ui.Button(
-                emoji=emoji, row=i // 5,
-                style=discord.ButtonStyle.primary if key == current else discord.ButtonStyle.secondary,
-            )
-            btn.callback = self._make_cb(key)
-            self.add_item(btn)
-        close = discord.ui.Button(emoji="✖️", style=discord.ButtonStyle.danger, row=1)
-        close.callback = self._close
-        self.add_item(close)
+        self.add_item(HelpCategorySelect(self.cat))
+        self.add_item(HelpCommandSelect(self.cat))
 
-    def _make_cb(self, key):
-        async def cb(interaction):
-            self._build(key)
-            if key == "home":
-                f = _help_file()
-                await interaction.response.edit_message(
-                    embed=help_pages_v2()["home"], view=self, attachments=[f] if f else [])
-            else:
-                await interaction.response.edit_message(
-                    embed=help_pages_v2()[key], view=self, attachments=[])
-        return cb
+        home = discord.ui.Button(label="Trang Chủ", emoji="🏠", style=discord.ButtonStyle.primary, row=2)
+        home.callback = self._home
+        search = discord.ui.Button(label="Tìm kiếm lệnh", emoji="🔍", style=discord.ButtonStyle.secondary, row=2)
+        search.callback = self._search
+        close = discord.ui.Button(label="Đóng", emoji="✖️", style=discord.ButtonStyle.danger, row=2)
+        close.callback = self._close
+        for b in (home, search, close):
+            self.add_item(b)
+
+    async def show(self, interaction, embed, home=False):
+        f = _help_file() if home else None
+        await interaction.response.edit_message(embed=embed, view=self, attachments=[f] if f else [])
+
+    async def _home(self, interaction):
+        self.cat = None
+        self.rebuild()
+        await self.show(interaction, help_home_embed(self.guild, self.user), home=True)
+
+    async def _search(self, interaction):
+        await interaction.response.send_modal(HelpSearchModal(self))
 
     async def _close(self, interaction):
         await interaction.response.edit_message(view=None)
         self.stop()
 
     async def interaction_check(self, interaction):
-        if interaction.user.id != self.author_id:
+        if interaction.user.id != self.user.id:
             await interaction.response.send_message("❌ Menu của người khác, gõ `.help` để mở menu riêng nhé.", ephemeral=True)
             return False
         return True
@@ -1473,15 +1509,16 @@ class HelpNavView(discord.ui.View):
             pass
 
 
-@bot.hybrid_command(name="help")
+@bot.hybrid_command(name="help", aliases=["menu", "lenh"])
 async def cmd_help_v2(ctx):
     """Mở menu trợ giúp."""
-    view = HelpNavView(ctx.author.id)
+    view = HelpView(ctx.author, ctx.guild)
+    embed = help_home_embed(ctx.guild, ctx.author)
     f = _help_file()
     if f:
-        view.message = await ctx.send(embed=help_pages_v2()["home"], view=view, file=f)
+        view.message = await ctx.send(embed=embed, view=view, file=f)
     else:
-        view.message = await ctx.send(embed=help_pages_v2()["home"], view=view)
+        view.message = await ctx.send(embed=embed, view=view)
 
 
 @bot.command(name="sethelpgif")
