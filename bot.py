@@ -38,7 +38,7 @@ BOT_ORIGINAL_NAME = "💤KS-BOT💤"
 DIEM_DANH_TRACKER = {}
 
 RIGHT_REACTION = discord.PartialEmoji(name="3_", id=1548249974611910687, animated=True)
-HELP_GIF = "https://cdn.discordapp.com/attachments/1573883113623261245/1574728280689483816/animation.gif"
+HELP_GIF = "https://cdn.discordapp.com/attachments/1573883113623261245/1575481139198435369/animation.gif"
 HELP_GIF_FILE = "help.gif"      # GIF lưu cục bộ (dùng .sethelpgif để đặt) → bot tự upload, không lo link chết
 START_TIME = time.time()
 
