@@ -23,7 +23,7 @@ Lệnh (có cả slash /welcome ...):
   .welcome color <#hex>     màu embed (mặc định xanh)
   .welcome dm on|off        gửi thêm vào tin nhắn riêng
   .welcome toggle on|off    bật/tắt lời chào
-  .welcome test             xem thử ngay (chào chính bạn)
+  .welcome test             xem thử ngay (chào chính bạn; nếu bật DM thì gửi DM luôn)
   .welcome reset            về mặc định
 """
 import json
@@ -271,11 +271,17 @@ class WelcomeCog(commands.Cog):
 
     @welcome.command(name="test")
     async def w_test(self, ctx):
-        """Xem thử lời chào (chào chính bạn, gửi ngay tại kênh này)."""
+        """Xem thử lời chào (chào chính bạn, gửi tại kênh này; nếu bật DM thì gửi DM luôn)."""
         if not await _guard(ctx):
             return
-        content, embed = build(ctx.author, get_cfg(ctx.guild.id))
+        cfg = get_cfg(ctx.guild.id)
+        content, embed = build(ctx.author, cfg)
         await ctx.send(content=content, embed=embed)
+        if cfg["dm"]:
+            try:
+                await ctx.author.send(content=content, embed=embed)
+            except Exception:
+                await ctx.send("⚠️ Không gửi được DM thử, hãy mở **Tin nhắn riêng** của server này.", delete_after=8)
 
     @welcome.command(name="reset")
     async def w_reset(self, ctx):
