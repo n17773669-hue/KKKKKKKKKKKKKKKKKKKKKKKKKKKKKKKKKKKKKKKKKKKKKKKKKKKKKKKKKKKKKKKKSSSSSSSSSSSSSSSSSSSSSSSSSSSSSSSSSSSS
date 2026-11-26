@@ -39,6 +39,26 @@ DIEM_DANH_TRACKER = {}
 
 RIGHT_REACTION = discord.PartialEmoji(name="3_", id=1548249974611910687, animated=True)
 HELP_GIF = "https://cdn.discordapp.com/attachments/1573883113623261245/1574728280689483816/animation.gif"
+HELP_GIF_FILE = "help.gif"      # GIF lưu cục bộ (dùng .sethelpgif để đặt) → bot tự upload, không lo link chết
+START_TIME = time.time()
+
+
+def _help_gif_ref():
+    return "attachment://help.gif" if os.path.exists(HELP_GIF_FILE) else HELP_GIF
+
+
+def _help_file():
+    if os.path.exists(HELP_GIF_FILE):
+        return discord.File(HELP_GIF_FILE, filename="help.gif")
+    return None
+
+
+def _fmt_uptime():
+    s = int(time.time() - START_TIME)
+    d, s = divmod(s, 86400)
+    h, s = divmod(s, 3600)
+    m = s // 60
+    return (f"{d}d " if d else "") + f"{h}h {m}m"
 
 # ================================================================
 # 👑 OWNER CONFIG — ĐỔI ID Ở ĐÂY NẾU SAU NÀY ĐỔI TÀI KHOẢN
@@ -1227,18 +1247,32 @@ HELP_PAGE_ORDER = [
 
 
 def help_pages_v2():
-    home = discord.Embed(color=C_INFO)
-    home.set_author(name="KS-BOT  •  Bảng lệnh")
+    try:
+        n_prefix = len(list(bot.walk_commands()))
+        n_slash = len(bot.tree.get_commands())
+    except Exception:
+        n_prefix = n_slash = 0
+    lat = bot.latency
+    ping = f"{round(lat * 1000)}ms" if lat == lat else "?"
+    home = discord.Embed(title="💤  KS-BOT  ✦  BẢNG LỆNH", color=C_INFO)
     home.description = (
-        "```ini\n[ prefix ] .    [ slash ] /\n```"
-        "Bấm **nút bên dưới** để chuyển trang.\n"
-        "🐺 Ma Sói · 🎮 Game · 💰 Kinh tế\n"
-        "🛡️ Quản trị · ✨ Tiện ích · 👋 Chào & Reply\n\n"
-        "**Hay dùng nhất**\n"
-        "> `.coin` ví · `.daily` lương · `.masoi` Ma Sói\n"
-        "> `.baucua` `.sicbo` `.mine` `.rps` chơi game"
+        "### 📊 THÔNG TIN BOT\n"
+        f"> 👑 **Owner:** <@{OWNER_USER_ID}>\n"
+        f"> ⌨️ **Prefix:** `.` ({n_prefix} lệnh) · **Slash:** `/` ({n_slash} lệnh)\n"
+        f"> 🌐 **Server:** {len(bot.guilds)} · 🏓 **Ping:** {ping} · ⏱️ **Online:** {_fmt_uptime()}\n"
+        "\n"
+        "### 🗂️ DANH MỤC\n"
+        "🐺 Ma Sói · 🎮 Mini Game · 💰 Kinh tế\n"
+        "🛡️ Quản trị · ✨ Tiện ích · 👋 Chào & Reply\n"
+        "\n"
+        "### 🔥 HAY DÙNG\n"
+        "`.coin` `.daily` `.masoi` `.baucua` `.sicbo` `.mine` `.rps`\n"
+        "\n"
+        "*Bấm nút bên dưới để chuyển trang.*"
     )
-    home.set_image(url=HELP_GIF)
+    if bot.user:
+        home.set_thumbnail(url=bot.user.display_avatar.url)
+    home.set_image(url=_help_gif_ref())
     home.set_footer(text="Nút xanh = trang đang xem • ✖️ để đóng")
 
     werewolf = discord.Embed(title="🐺 MA SÓI", description=_DIV, color=0x8E44AD)
@@ -1410,7 +1444,13 @@ class HelpNavView(discord.ui.View):
     def _make_cb(self, key):
         async def cb(interaction):
             self._build(key)
-            await interaction.response.edit_message(embed=help_pages_v2()[key], view=self)
+            if key == "home":
+                f = _help_file()
+                await interaction.response.edit_message(
+                    embed=help_pages_v2()["home"], view=self, attachments=[f] if f else [])
+            else:
+                await interaction.response.edit_message(
+                    embed=help_pages_v2()[key], view=self, attachments=[])
         return cb
 
     async def _close(self, interaction):
@@ -1437,7 +1477,35 @@ class HelpNavView(discord.ui.View):
 async def cmd_help_v2(ctx):
     """Mở menu trợ giúp."""
     view = HelpNavView(ctx.author.id)
-    view.message = await ctx.send(embed=help_pages_v2()["home"], view=view)
+    f = _help_file()
+    if f:
+        view.message = await ctx.send(embed=help_pages_v2()["home"], view=view, file=f)
+    else:
+        view.message = await ctx.send(embed=help_pages_v2()["home"], view=view)
+
+
+@bot.command(name="sethelpgif")
+async def cmd_sethelpgif(ctx, url: str = None):
+    """(Owner) Đặt GIF cho help: đính kèm file GIF vào tin nhắn, hoặc dán link trực tiếp."""
+    if not is_bot_owner(ctx.author):
+        return
+    data = None
+    try:
+        if ctx.message.attachments:
+            data = await ctx.message.attachments[0].read()
+        elif url:
+            import aiohttp
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url) as r:
+                    if r.status == 200:
+                        data = await r.read()
+        if not data:
+            return await ctx.send("❌ Hãy **đính kèm file GIF** vào lệnh: `.sethelpgif` + file.", delete_after=8)
+        with open(HELP_GIF_FILE, "wb") as fh:
+            fh.write(data)
+        await _ack(ctx)
+    except Exception as e:
+        await ctx.send(f"❌ Không lưu được GIF: `{type(e).__name__}`", delete_after=8)
 
 
 # ==========================================
