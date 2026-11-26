@@ -1235,6 +1235,52 @@ async def cmd_kenhlixi(ctx, channel: discord.TextChannel = None):
     await ctx.send(f"🧧 Lì xì sẽ phát tại {channel.mention}.", delete_after=8)
 
 
+# ==========================================
+# 📊 SERVERINFO — thông tin server (giống Dyno)
+# ==========================================
+class ServerRolesView(discord.ui.View):
+    def __init__(self, guild):
+        super().__init__(timeout=180)
+        self.guild = guild
+
+    @discord.ui.button(label="View Roles", style=discord.ButtonStyle.primary)
+    async def view_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
+        roles = [r for r in reversed(self.guild.roles) if not r.is_default()]
+        text = " ".join(r.mention for r in roles) or "Không có role nào."
+        if len(text) > 4000:
+            text = text[:3990].rsplit(" ", 1)[0] + " ..."
+        e = discord.Embed(title=f"🎭 Roles ({len(roles)})", description=text, color=C_INFO)
+        await interaction.response.send_message(embed=e, ephemeral=True)
+
+    async def on_timeout(self):
+        for c in self.children:
+            c.disabled = True
+
+
+@bot.hybrid_command(name='serverinfo', aliases=['svinfo', 'si'])
+async def cmd_serverinfo(ctx):
+    """Xem thông tin server."""
+    g = ctx.guild
+    if not g:
+        return await ctx.send("❌ Lệnh này chỉ dùng trong server.", delete_after=5)
+    e = discord.Embed(title=g.name, color=C_INFO)
+    if g.icon:
+        e.set_thumbnail(url=g.icon.url)
+    e.description = (
+        f"**Owner:** {g.owner.display_name if g.owner else g.owner_id}\n"
+        f"**Members:** {g.member_count}\n"
+        f"**Roles:** {len(g.roles) - 1}\n\n"
+        f"**Category Channels:** {len(g.categories)}\n"
+        f"**Text Channels:** {len(g.text_channels)}\n"
+        f"**Voice Channels:** {len(g.voice_channels)}\n\n"
+        f"**Threads:** {len(g.threads)}\n\n"
+        f"**Boost Count:** {g.premium_subscription_count} Boosts (Tier {g.premium_tier})\n\n"
+        f"ID: {g.id}\n"
+        f"Server Created {discord.utils.format_dt(g.created_at, 'F')} ({discord.utils.format_dt(g.created_at, 'R')})"
+    )
+    await ctx.send(embed=e, view=ServerRolesView(g))
+
+
 # ================================================================
 # 📖 HELP — menu chọn danh mục + chọn lệnh + tìm kiếm (kiểu bot xịn)
 #    Trang chủ: tên/ảnh server ở trên cùng, THÔNG TIN VỀ BOT, avatar bot
@@ -1298,12 +1344,14 @@ HELP_DATA = {
         ]),
     "utility": dict(
         emoji="✨", label="Tiện Ích", color=0x9B59B6,
-        short="Avatar, đổi tên, AFK, trợ giúp",
+        short="Avatar, đổi tên, AFK, thông tin server, trợ giúp",
         desc="Các lệnh nhỏ hay dùng. Kênh bị `.blockbot` vẫn dùng được `.av` `.afk` `.name`.",
         items=[
             ("av", "🖼️", "`.av [@user]` `/av` • alias: `avt`", "Xem ảnh đại diện HD."),
             ("nickname", "✏️", "`.nickname <tên>` `/nickname` • alias: `name`", "Đổi biệt danh của bạn (tối đa 32 ký tự)."),
             ("afk", "💤", "`.afk [lý do]` `/afk`", "Bật AFK, ai ping bạn bot sẽ báo lý do. Nhắn tin lại là tự tắt."),
+            ("serverinfo", "📊", "`.serverinfo` `/serverinfo` • alias: `svinfo`, `si`",
+             "Xem thông tin server: chủ, thành viên, role, kênh, boost, ngày tạo."),
             ("help", "📖", "`.help` `/help`", "Mở menu trợ giúp này."),
         ]),
     "welcome": dict(
@@ -1352,7 +1400,7 @@ def help_home_embed(guild, user):
         f"> 👑 **Owner:** <@{OWNER_USER_ID}>\n"
         f"> ⌨️ **Prefix Commands:** `{n_prefix}` (`.`)\n"
         f"> ⚡ **Slash Commands:** `{n_slash}` (`/`)\n"
-        f"> 🌐 **Server:** `{len(bot.guilds)}` • 🏓 **Ping:** `{ping}` • ⏱️ **Online:** `{_fmt_uptime()}`\n"
+        f"> 🌐 **Server:** `{len(bot.guilds)}` • 🏓 **Ping:** `{ping}`\n"
         f"> 📚 **Lệnh trong menu:** `{total_cmds}`\n"
         "\n"
         "🔥 **Hay dùng:** `.coin` `.daily` `.masoi` `.baucua` `.sicbo` `.mine` `.rps`\n"
@@ -1523,21 +1571,25 @@ async def cmd_help_v2(ctx):
 
 @bot.command(name="sethelpgif")
 async def cmd_sethelpgif(ctx, url: str = None):
-    """(Owner) Đặt GIF cho help: đính kèm file GIF vào tin nhắn, hoặc dán link trực tiếp."""
+    """(Owner) Đặt GIF cho help: đính kèm GIF, reply tin có GIF, hoặc dán link trực tiếp."""
     if not is_bot_owner(ctx.author):
         return
     data = None
     try:
-        if ctx.message.attachments:
-            data = await ctx.message.attachments[0].read()
+        atts = list(ctx.message.attachments)
+        ref = ctx.message.reference
+        if not atts and ref and isinstance(ref.resolved, discord.Message):
+            atts = list(ref.resolved.attachments)
+        if atts:
+            data = await atts[0].read()
         elif url:
             import aiohttp
             async with aiohttp.ClientSession() as s:
-                async with s.get(url) as r:
+                async with s.get(url.strip("<>")) as r:
                     if r.status == 200:
                         data = await r.read()
         if not data:
-            return await ctx.send("❌ Hãy **đính kèm file GIF** vào lệnh: `.sethelpgif` + file.", delete_after=8)
+            return await ctx.send("❌ Hãy **đính kèm file GIF** vào lệnh: `.sethelpgif` + file (hoặc dán link GIF trực tiếp).", delete_after=8)
         with open(HELP_GIF_FILE, "wb") as fh:
             fh.write(data)
         await _ack(ctx)
