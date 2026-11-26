@@ -36,7 +36,9 @@ bot.game_lobbies = {}
 
 BOT_ORIGINAL_NAME = "💤KS-BOT💤"
 DIEM_DANH_TRACKER = {}
-AFK_USERS = {}
+
+RIGHT_REACTION = discord.PartialEmoji(name="3_", id=1548249974611910687, animated=True)
+HELP_GIF = "https://cdn.discordapp.com/attachments/1573883113623261245/1574728280689483816/animation.gif"
 
 # ================================================================
 # 👑 OWNER CONFIG — ĐỔI ID Ở ĐÂY NẾU SAU NÀY ĐỔI TÀI KHOẢN
@@ -52,7 +54,7 @@ def is_bot_owner(user):
 
 
 # ==========================================
-# 🎨 BẢNG MÀU + HÀM TẠO EMBED ĐẸP
+# 🎨 BẢNG MÀU + HÀM TẠO EMBED
 # ==========================================
 C_OK = 0x2ECC71
 C_ERR = 0xE74C3C
@@ -72,6 +74,19 @@ def ks_embed(title, desc=None, color=C_INFO, user=None, thumb=None, footer=None)
     elif footer:
         e.set_footer(text=footer)
     return e
+
+
+async def _ack(ctx, text="✅ Xong!"):
+    """Xác nhận bằng emote (prefix) hoặc tin ẩn (slash). Không spam tin nhắn."""
+    if ctx.interaction:
+        return await ctx.send(text, ephemeral=True)
+    try:
+        await ctx.message.add_reaction(RIGHT_REACTION)
+    except Exception:
+        try:
+            await ctx.message.add_reaction("✅")
+        except Exception:
+            pass
 
 
 # ==========================================
@@ -123,73 +138,143 @@ if not getattr(discord.Embed.__init__, "_ksbot_v11", False):
 
 
 # ==========================================
-# ĐỔI BIỆT DANH (.name)
+# 💤 AFK — lưu file, key theo (server, user)
+# ==========================================
+AFK_FILE = "afk_users.json"
+AFK_PREFIX = "[AFK] "
+
+
+def _afk_key(guild_id, user_id):
+    return f"{guild_id}:{user_id}"
+
+
+def _load_afk():
+    try:
+        with open(AFK_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_afk():
+    try:
+        with open(AFK_FILE, "w", encoding="utf-8") as f:
+            json.dump(AFK_USERS, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+AFK_USERS = _load_afk()   # {"guild:user": {"reason": str, "old_nick": str|None}}
+
+
+def _afk_original_nick(member):
+    """Lấy nick gốc (None = đang dùng tên mặc định), bỏ [AFK] nếu có."""
+    nick = member.nick
+    if nick and nick.startswith(AFK_PREFIX):
+        nick = nick[len(AFK_PREFIX):]
+        if nick in (member.name, member.global_name):
+            nick = None
+    return nick
+
+
+async def _apply_afk_nick(member, orig):
+    try:
+        g = member.guild
+        if member == g.owner or not g.me.guild_permissions.manage_nicknames:
+            return
+        base = orig or member.global_name or member.name
+        new = (AFK_PREFIX + base)[:32]
+        if member.nick != new:
+            await member.edit(nick=new, reason="Bật AFK")
+    except Exception:
+        pass
+
+
+async def _restore_nick(member, orig):
+    """Trả đúng nick gốc. Nếu người đó tự đổi nick khác khi đang AFK thì không đụng."""
+    try:
+        g = member.guild
+        if member == g.owner or not g.me.guild_permissions.manage_nicknames:
+            return
+        if member.nick and member.nick.startswith(AFK_PREFIX):
+            await member.edit(nick=orig, reason="Tắt AFK")   # orig=None → về tên mặc định
+    except Exception:
+        pass
+
+
+@bot.hybrid_command(name='afk')
+async def cmd_afk(ctx, *, reason: str = None):
+    """Bật chế độ AFK."""
+    if not ctx.guild:
+        return
+    member = ctx.author
+    key = _afk_key(ctx.guild.id, member.id)
+    reason = (reason or "thí chủ đi vắng rồi đừng gọi").strip()[:200]
+
+    old = AFK_USERS.get(key)
+    orig = old["old_nick"] if old else _afk_original_nick(member)   # không bao giờ ghi đè tên gốc
+    AFK_USERS[key] = {"reason": reason, "old_nick": orig}
+    _save_afk()
+    await _apply_afk_nick(member, orig)
+    await _ack(ctx, f"💤 Đã bật AFK: *{reason}*")
+
+
+async def _afk_handle(message):
+    """Xử lý AFK: tự tắt khi người đó nhắn, và trả lời khi có người ping/reply người đang AFK.
+    Được gọi cả ở kênh bị .blockbot."""
+    if not message.guild or message.author.bot:
+        return
+
+    key = _afk_key(message.guild.id, message.author.id)
+    if key in AFK_USERS and _command_name_from_message(message) != "afk":
+        info = AFK_USERS.pop(key)
+        _save_afk()
+        await _restore_nick(message.author, info.get("old_nick"))
+        try:
+            await message.channel.send(f"👋 {message.author.mention} đã quay lại, tắt AFK.", delete_after=5)
+        except Exception:
+            pass
+
+    targets = {m.id: m for m in message.mentions}
+    ref = message.reference
+    if ref and isinstance(ref.resolved, discord.Message):
+        targets.setdefault(ref.resolved.author.id, ref.resolved.author)
+    for uid, user in list(targets.items())[:3]:
+        if uid == message.author.id or user.bot:
+            continue
+        info = AFK_USERS.get(_afk_key(message.guild.id, uid))
+        if info:
+            try:
+                await message.reply(
+                    f"💤 **{user.display_name}** đang AFK: *{info['reason']}*",
+                    mention_author=False, delete_after=15,
+                )
+            except Exception:
+                pass
+
+
+# ==========================================
+# ĐỔI BIỆT DANH (.name) — chỉ thả emote
 # ==========================================
 @bot.hybrid_command(name='nickname', aliases=['name'])
 async def cmd_name(ctx, *, new_nick: str = None):
     """Đổi biệt danh của bạn."""
     if not new_nick:
-        await ctx.send("❌ Cú pháp: `.nickname <tên_mới>` (hoặc `.name`)", delete_after=5)
-        return
-
+        return await ctx.send("❌ Cú pháp: `.nickname <tên_mới>` (hoặc `.name`)", delete_after=5)
     if len(new_nick) > 32:
-        await ctx.send("❌ Biệt danh không được vượt quá 32 ký tự!", delete_after=5)
-        return
-
+        return await ctx.send("❌ Biệt danh tối đa 32 ký tự!", delete_after=5)
+    if ctx.author == ctx.guild.owner:
+        return await ctx.send("❌ Bot không thể đổi biệt danh của Chủ Server!", delete_after=5)
     try:
-        if ctx.author == ctx.guild.owner:
-            await ctx.send("❌ Bot không thể đổi biệt danh của Chủ Server!", delete_after=5)
-            return
-
-        old = ctx.author.display_name
-        await ctx.author.edit(nick=new_nick, reason="Người dùng đổi tên bằng lệnh .name")
-        embed = ks_embed(
-            "✏️ ĐỔI BIỆT DANH THÀNH CÔNG",
-            f"**{old}**  ➜  **{new_nick}**",
-            color=C_OK, user=ctx.author, thumb=ctx.author.display_avatar.url,
-        )
-        await ctx.send(embed=embed)
+        await ctx.author.edit(nick=new_nick, reason="Đổi tên bằng lệnh .name")
         add_exp_to_user(ctx.author.id, 10)
+        await _ack(ctx, f"✏️ Đã đổi tên thành **{new_nick}**")
     except Exception as e:
-        await ctx.send(f"❌ Không thể đổi biệt danh: {e}", delete_after=6)
+        await ctx.send(f"❌ Không đổi được: `{type(e).__name__}`", delete_after=6)
 
 
 # ==========================================
-# AFK (.afk)
-# ==========================================
-@bot.hybrid_command(name='afk')
-async def cmd_afk(ctx, *, reason: str = None):
-    """Bật chế độ AFK."""
-    uid_str = str(ctx.author.id)
-    old_nick = ctx.author.nick or ctx.author.name
-
-    AFK_USERS[uid_str] = {
-        "reason": reason if reason else "thí chủ đi vắng rồi đừng gọi",
-        "old_nick": old_nick
-    }
-
-    try:
-        if ctx.author != ctx.guild.owner and ctx.guild.me.guild_permissions.manage_nicknames:
-            clean_name = old_nick
-            if "[AFK]" not in clean_name:
-                new_afk_nick = f"[AFK] {clean_name}"
-                if len(new_afk_nick) <= 32:
-                    await ctx.author.edit(nick=new_afk_nick, reason="Bật chế độ AFK")
-    except Exception:
-        pass
-
-    display_reason = reason if reason else "thí chủ đi vắng rồi đừng gọi"
-    embed = ks_embed(
-        "💤 ĐÃ BẬT CHẾ ĐỘ AFK",
-        f"**{ctx.author.display_name}** đang vắng mặt.\n> 📝 Lý do: *{display_reason}*",
-        color=C_DARK, user=ctx.author, thumb=ctx.author.display_avatar.url,
-        footer="Nhắn tin bất kỳ để tắt AFK",
-    )
-    await ctx.send(embed=embed)
-
-
-# ==========================================
-# KINH TẾ: PAY / AV / COIN / DAILY / TOP
+# KINH TẾ: PAY / AV / COIN / DAILY
 # ==========================================
 @bot.hybrid_command(name='pay', aliases=['transfer'])
 async def cmd_pay(ctx, member: discord.Member = None, amount_str: str = None):
@@ -338,9 +423,7 @@ async def cmd_khoamom(ctx, member: discord.Member = None):
         return
     try:
         await member.timeout(datetime.timedelta(minutes=5), reason="Khóa mõm 5p")
-        embed = ks_embed("🤐 KHÓA MÕM", f"{member.mention} bị khóa mõm trong **5 phút**!",
-                         color=C_ERR, user=ctx.author, thumb=member.display_avatar.url)
-        await ctx.send(embed=embed)
+        await ctx.send(f"🤐 {member.mention} bị khóa mõm **5 phút**.", delete_after=8)
         add_exp_to_user(ctx.author.id, 10)
     except Exception as e:
         await ctx.send(f"❌ Lỗi: {e}", delete_after=6)
@@ -357,9 +440,7 @@ async def cmd_unmute(ctx, member: discord.Member = None):
         return
     try:
         await member.timeout(None, reason="Gỡ mute")
-        embed = ks_embed("🔊 ĐÃ GỠ MUTE", f"{member.mention} đã được nói chuyện trở lại!",
-                         color=C_OK, user=ctx.author, thumb=member.display_avatar.url)
-        await ctx.send(embed=embed)
+        await ctx.send(f"🔊 Đã gỡ mute cho {member.mention}.", delete_after=8)
     except Exception as e:
         await ctx.send(f"❌ Lỗi: {e}", delete_after=6)
 
@@ -385,9 +466,7 @@ async def cmd_khoachat(ctx, member: discord.Member = None, time_str: str = None)
     delta = datetime.timedelta(hours=val) if 'h' in t_unit else datetime.timedelta(days=val) if 'd' in t_unit else datetime.timedelta(minutes=val)
     try:
         await member.timeout(delta, reason=f"Khóa chat bởi {ctx.author}")
-        embed = ks_embed("🔇 KHÓA CHAT", f"{member.mention} bị khóa chat trong **{time_str}**.",
-                         color=C_ERR, user=ctx.author, thumb=member.display_avatar.url)
-        await ctx.send(embed=embed, delete_after=8)
+        await ctx.send(f"🔇 {member.mention} bị khóa chat **{time_str}**.", delete_after=8)
         add_exp_to_user(ctx.author.id, 15)
     except Exception as e:
         await ctx.send(f"❌ Không thể khóa chat: `{type(e).__name__}`", delete_after=6)
@@ -455,8 +534,7 @@ async def cmd_unban(ctx, user_id: str = None):
         return
     try:
         await ctx.guild.unban(discord.Object(id=int(user_id)), reason=f"Unban bởi {ctx.author}")
-        embed = ks_embed("🔓 ĐÃ UNBAN", f"Đã gỡ ban cho ID `{user_id}`.", color=C_OK, user=ctx.author)
-        await ctx.send(embed=embed, delete_after=8)
+        await ctx.send(f"🔓 Đã gỡ ban ID `{user_id}`.", delete_after=8)
     except discord.NotFound:
         await ctx.send("❌ Không tìm thấy người này trong danh sách ban.", delete_after=5)
     except Exception as e:
@@ -527,8 +605,7 @@ async def _clear_core(ctx, target, spec):
             pass
 
         who = f" của {target.mention}" if target else ""
-        embed = ks_embed("🧹 DỌN DẸP XONG", f"Đã xóa **{len(deleted)}** tin nhắn{who} ({label}).", color=C_OK)
-        return await ctx.channel.send(embed=embed, delete_after=4)
+        return await ctx.channel.send(f"🧹 Đã xóa **{len(deleted)}** tin nhắn{who} ({label}).", delete_after=4)
     except discord.Forbidden:
         return await ctx.send("❌ Bot không có quyền **Manage Messages** ở kênh này.", delete_after=6)
     except Exception as e:
@@ -629,12 +706,20 @@ async def cmd_delrole(ctx, member: discord.Member = None, role: discord.Role = N
 
 # ================================================================
 # 🔒 KÊNH CẤM BOT (.blockbot / .unblockbot)
-#    Cách hoạt động mới: đặt QUYỀN RIÊNG CHO TỪNG BOT chỉ trong kênh này
-#    (View Channel = ❌) → bot khác không thấy, không đọc được kênh.
-#    Không đụng tới role/quyền ở các kênh khác. Lưu SQLite để restart không mất.
+#    Đặt QUYỀN RIÊNG CHO TỪNG BOT chỉ trong kênh này (View Channel = ❌).
+#    Lưu SQLite để restart không mất.
+#    Kênh bị block chỉ dùng được: .av  .afk  .name  (+ autoreply, + blockbot/unblockbot)
 # ================================================================
 BOT_BLOCKED_CHANNELS = {}
 BLOCK_REASON = "KS-BOT: kênh cấm bot"
+
+# Lệnh còn dùng được trong kênh bị block (tên gốc của command, dùng cho slash + check chung)
+_BLOCKED_ALLOWED_NAMES = {"av", "nickname", "afk", "blockbot", "unblockbot"}
+# Tên gõ ra khi dùng prefix (gồm cả alias)
+_BLOCKED_ALLOWED_PREFIX = {
+    "av", "avt", "nickname", "name", "afk",
+    "blockbot", "clbot", "unblockbot", "dclbot",   # bắt buộc giữ để chủ còn mở lại được kênh
+}
 
 
 def _ensure_bot_control_table():
@@ -684,11 +769,43 @@ def load_persisted_bot_blocks():
 
 
 load_persisted_bot_blocks()
-bot.blocked_channels = BOT_BLOCKED_CHANNELS  # cho các extension (autoreply...) dùng chung
+bot.blocked_channels = BOT_BLOCKED_CHANNELS  # cho các extension dùng chung
 
 
 def is_bot_command_message(message):
     return (message.content or "").lstrip().startswith((".", "!"))
+
+
+def _command_name_from_message(message):
+    content = (message.content or "").lstrip()
+    if not content.startswith((".", "!")):
+        return ""
+    return content[1:].split(None, 1)[0].lower() if content[1:].strip() else ""
+
+
+@bot.check
+async def _blocked_channel_gate(ctx):
+    """Chặn mọi lệnh (kể cả slash và lệnh của cog) trong kênh bị block, trừ nhóm được phép."""
+    if ctx.guild and ctx.channel.id in BOT_BLOCKED_CHANNELS.get(ctx.guild.id, set()):
+        if ctx.command and ctx.command.name in _BLOCKED_ALLOWED_NAMES:
+            return True
+        if ctx.interaction:
+            try:
+                await ctx.send("🔒 Kênh này đã bị cấm bot, chỉ dùng được `/av` `/afk` `/nickname`.", ephemeral=True)
+            except Exception:
+                pass
+        return False
+    return True
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    # Im lặng với lệnh bị chặn / không tồn tại; in log các lỗi khác.
+    if isinstance(error, (commands.CheckFailure, commands.CommandNotFound)):
+        return
+    if hasattr(ctx.command, "on_error"):
+        return
+    print(f"[CommandError] {ctx.command}: {type(error).__name__}: {error}")
 
 
 async def _hide_channel_from_bots(channel):
@@ -696,7 +813,6 @@ async def _hide_channel_from_bots(channel):
     guild = channel.guild
     me = guild.me
 
-    # KS-BOT luôn giữ quyền thấy + nhắn trong kênh để còn nhận lệnh quản trị.
     try:
         await channel.set_permissions(
             me, view_channel=True, send_messages=True, read_message_history=True,
@@ -764,25 +880,18 @@ async def cmd_clbot(ctx, channel: discord.TextChannel = None):
     BOT_BLOCKED_CHANNELS.setdefault(gid, set()).add(target.id)
     persist_bot_block_channel(gid, target.id)
 
-    # Phản hồi NGAY, xử lý xong rồi sửa lại tin nhắn.
-    msg = await ctx.send(embed=ks_embed("🔒 ĐANG CẤM BOT...", f"Đang ẩn {target.mention} với bot khác ⏳", color=C_GOLD, user=ctx.author))
-
+    msg = await ctx.send(f"🔒 Đang ẩn {target.mention} với bot khác ⏳")
     hidden, failed = await _hide_channel_from_bots(target)
 
-    desc = (
-        f"Kênh {target.mention} đã **ẩn hoàn toàn** với bot khác.\n\n"
-        f"🙈 Bot bị ẩn kênh: **{hidden}**\n"
-        + (f"⚠️ Không chỉnh được: **{failed}** bot\n" if failed else "")
-        + "\n• Bot khác **không thấy, không đọc được** kênh này.\n"
-        "• Bot nào vẫn nhắn được → tin nhắn bị **xóa ngay**.\n"
-        "• Chỉ áp dụng cho **kênh này**.\n"
-        "• Dùng `.unblockbot` để mở lại."
+    text = (
+        f"🔒 Đã cấm bot ở {target.mention} — ẩn với **{hidden}** bot"
+        + (f", không chỉnh được **{failed}** bot" if failed else "")
+        + ".\nTrong kênh này chỉ còn `.av` `.afk` `.name` và autoreply. Dùng `.unblockbot` để mở lại."
     )
-    embed = ks_embed("🔒 ĐÃ CẤM BOT VÀO KÊNH", desc, color=C_ERR, user=ctx.author)
     try:
-        await msg.edit(embed=embed)
+        await msg.edit(content=text)
     except Exception:
-        await ctx.send(embed=embed)
+        await ctx.send(text)
     asyncio.create_task(_delete_later(msg, 15))
 
 
@@ -796,17 +905,13 @@ async def cmd_dclbot(ctx, channel: discord.TextChannel = None):
     BOT_BLOCKED_CHANNELS.setdefault(gid, set()).discard(target.id)
     unpersist_bot_block_channel(gid, target.id)
 
-    msg = await ctx.send(embed=ks_embed("🔓 ĐANG MỞ KÊNH...", f"Đang mở {target.mention} cho bot ⏳", color=C_GOLD, user=ctx.author))
+    msg = await ctx.send(f"🔓 Đang mở {target.mention} cho bot ⏳")
     restored = await _show_channel_to_bots(target)
-    embed = ks_embed(
-        "🔓 ĐÃ MỞ KÊNH CHO BOT",
-        f"Kênh {target.mention} đã được mở lại.\n🙉 Bot được hiện lại kênh: **{restored}**",
-        color=C_OK, user=ctx.author,
-    )
+    text = f"🔓 Đã mở lại {target.mention} — hiện lại kênh cho **{restored}** bot."
     try:
-        await msg.edit(embed=embed)
+        await msg.edit(content=text)
     except Exception:
-        await ctx.send(embed=embed)
+        await ctx.send(text)
     asyncio.create_task(_delete_later(msg, 10))
 
 
@@ -897,12 +1002,11 @@ async def cmd_lock(ctx, channel: discord.TextChannel = None):
     everyone = ctx.guild.default_role
     ow = target.overwrites_for(everyone)
     if _lock_get(ctx.guild.id, target.id) is not None:
-        return await ctx.send(embed=ks_embed("🔒 KÊNH ĐÃ KHÓA SẴN", f"{target.mention} đang bị khóa rồi.", color=C_GOLD, user=ctx.author), delete_after=6)
+        return await ctx.send(f"🔒 {target.mention} đang bị khóa rồi.", delete_after=6)
 
     prev = -1 if ow.send_messages is None else (1 if ow.send_messages else 0)
     _lock_set(ctx.guild.id, target.id, prev)
     try:
-        # KS-BOT vẫn phải nhắn được để còn báo kết quả / mở khóa
         await target.set_permissions(ctx.guild.me, send_messages=True, reason=f"Lock bởi {ctx.author}")
         ow.send_messages = False
         await target.set_permissions(everyone, overwrite=ow, reason=f"Lock bởi {ctx.author}")
@@ -910,12 +1014,7 @@ async def cmd_lock(ctx, channel: discord.TextChannel = None):
         _lock_del(ctx.guild.id, target.id)
         return await ctx.send(f"❌ Không thể khóa kênh: `{type(e).__name__}`", delete_after=6)
 
-    embed = ks_embed(
-        "🔒 ĐÃ KHÓA KÊNH",
-        f"{target.mention} đã bị **khóa**.\n\n• Thành viên thường **không thể chat** trong kênh này.\n• Dùng `.unlock` để mở lại.",
-        color=C_ERR, user=ctx.author,
-    )
-    await ctx.send(embed=embed)
+    await ctx.send(f"🔒 Đã khóa {target.mention}. Dùng `.unlock` để mở.", delete_after=10)
 
 
 @bot.hybrid_command(name='unlock')
@@ -930,7 +1029,7 @@ async def cmd_unlock(ctx, channel: discord.TextChannel = None):
     everyone = ctx.guild.default_role
     ow = target.overwrites_for(everyone)
     if prev is None and ow.send_messages is not False:
-        return await ctx.send(embed=ks_embed("🔓 KÊNH ĐANG MỞ", f"{target.mention} không bị khóa.", color=C_GOLD, user=ctx.author), delete_after=6)
+        return await ctx.send(f"🔓 {target.mention} không bị khóa.", delete_after=6)
 
     ow.send_messages = True if prev == 1 else (False if prev == 0 else None)
     try:
@@ -943,8 +1042,7 @@ async def cmd_unlock(ctx, channel: discord.TextChannel = None):
         return await ctx.send(f"❌ Không thể mở khóa kênh: `{type(e).__name__}`", delete_after=6)
 
     _lock_del(ctx.guild.id, target.id)
-    embed = ks_embed("🔓 ĐÃ MỞ KHÓA KÊNH", f"{target.mention} đã **mở lại**, mọi người chat bình thường.", color=C_OK, user=ctx.author)
-    await ctx.send(embed=embed)
+    await ctx.send(f"🔓 Đã mở khóa {target.mention}.", delete_after=10)
 
 
 @cmd_lock.error
@@ -987,9 +1085,7 @@ async def cmd_kenhksbot(ctx, channel: discord.TextChannel = None):
         channel = ctx.channel
     KS_BOT_CHANNELS[ctx.guild.id] = channel.id
     _save_ksbot_channels()
-    embed = ks_embed("🤖 ĐÃ ĐẶT KÊNH KS-BOT", f"{channel.mention} là **kênh riêng của KS-BOT**.\nBot khác nhắn trong đây sẽ bị xóa.",
-                     color=C_OK, user=ctx.author)
-    await ctx.send(embed=embed, delete_after=8)
+    await ctx.send(f"🤖 {channel.mention} là kênh riêng của KS-BOT. Bot khác nhắn trong đây sẽ bị xóa.", delete_after=8)
 
 
 @cmd_kenhksbot.error
@@ -1002,7 +1098,6 @@ async def cmd_kenhksbot_error(ctx, error):
 async def _ksbot_message_guard(message):
     if message.author == bot.user:
         return
-    # Bot khác nhắn trong kênh KS-BOT -> xóa ngay.
     if message.guild and KS_BOT_CHANNELS.get(message.guild.id) == message.channel.id and message.author.bot:
         try:
             await message.delete()
@@ -1117,76 +1212,34 @@ async def cmd_kenhlixi(ctx, channel: discord.TextChannel = None):
 
     LIXI_CHANNELS[ctx.guild.id] = channel.id
     _save_lixi_channels()
-    embed = ks_embed(
-        "🧧 ĐÃ ĐẶT KÊNH LÌ XÌ",
-        f"📍 Chỉ phát lì xì tại {channel.mention}\n🔒 Bot sẽ không tự chọn kênh khác nữa.",
-        color=C_ERR, user=ctx.author,
-    )
-    await ctx.send(embed=embed, delete_after=8)
+    await ctx.send(f"🧧 Lì xì sẽ phát tại {channel.mention}.", delete_after=8)
 
 
 # ================================================================
-# 📖 HELP V3 — giao diện mới
+# 📖 HELP — hàng nút, có GIF, không dropdown
 # ================================================================
-class HelpCategorySelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Trang chính", value="home", emoji="🏠", description="Tổng quan bot & cách dùng"),
-            discord.SelectOption(label="Ma Sói", value="werewolf", emoji="🐺", description="Phòng, vai trò, manh mối"),
-            discord.SelectOption(label="Mini Game", value="games", emoji="🎮", description="Bầu Cua, Tài Xỉu, Mines, Tuxi"),
-            discord.SelectOption(label="Kinh Tế", value="economy", emoji="💰", description="Coin, daily, pay, top"),
-            discord.SelectOption(label="Quản Trị", value="admin", emoji="🛡️", description="Mute, khóa bot, quản lý"),
-            discord.SelectOption(label="Tiện Ích", value="utility", emoji="✨", description="Avatar, AFK, đổi tên, lì xì"),
-            discord.SelectOption(label="Chào & Tự trả lời", value="welcome", emoji="👋", description="Chào thành viên mới, bot tự reply"),
-        ]
-        super().__init__(placeholder="📂 Chọn mục trợ giúp...", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction):
-        pages = help_pages_v2()
-        embed = pages.get(self.values[0], pages["home"])
-        embed.set_footer(text="💡 .help hoặc /help để mở lại menu • Một số lệnh cần quyền phù hợp")
-        await interaction.response.edit_message(embed=embed, view=self.view)
-
-
-class HelpHomeView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(HelpCategorySelect())
-
-
 _DIV = "━━━━━━━━━━━━━━━━━━━━"
+
+HELP_PAGE_ORDER = [
+    ("home", "🏠"), ("werewolf", "🐺"), ("games", "🎮"), ("economy", "💰"),
+    ("admin", "🛡️"), ("utility", "✨"), ("welcome", "👋"),
+]
 
 
 def help_pages_v2():
-    home = discord.Embed(
-        title="🤖 KS-BOT  ✦  TRUNG TÂM TRỢ GIÚP",
-        description=(
-            "Chào mừng bạn! Chọn **danh mục** ở menu bên dưới để xem chi tiết.\n"
-            f"{_DIV}\n"
-            "⚡ **Prefix:** `.`   ┃   🆕 **Slash:** `/`\n"
-            f"{_DIV}"
-        ),
-        color=C_INFO
+    home = discord.Embed(color=C_INFO)
+    home.set_author(name="KS-BOT  •  Bảng lệnh")
+    home.description = (
+        "```ini\n[ prefix ] .    [ slash ] /\n```"
+        "Bấm **nút bên dưới** để chuyển trang.\n"
+        "🐺 Ma Sói · 🎮 Game · 💰 Kinh tế\n"
+        "🛡️ Quản trị · ✨ Tiện ích · 👋 Chào & Reply\n\n"
+        "**Hay dùng nhất**\n"
+        "> `.coin` ví · `.daily` lương · `.masoi` Ma Sói\n"
+        "> `.baucua` `.sicbo` `.mine` `.rps` chơi game"
     )
-    home.add_field(name="🐺 Ma Sói", value="Phòng chơi, vai trò", inline=True)
-    home.add_field(name="🎮 Mini Game", value="Bầu Cua, Tài Xỉu, Mines", inline=True)
-    home.add_field(name="💰 Kinh Tế", value="Ví, lương, chuyển coin", inline=True)
-    home.add_field(name="🛡️ Quản Trị", value="🔒 Owner / Chủ Server", inline=True)
-    home.add_field(name="✨ Tiện Ích", value="Avatar, đổi tên, AFK", inline=True)
-    home.add_field(name="🧧 Sự kiện", value="Lì xì ngẫu nhiên", inline=True)
-    home.add_field(name="👋 Chào & Trả lời", value="Embed chào, bot tự reply", inline=True)
-    home.add_field(name="\u200b", value="\u200b", inline=True)
-    home.add_field(name="\u200b", value="\u200b", inline=True)
-    home.add_field(
-        name="💡 Mẹo nhanh",
-        value=(
-            "› Gõ `/` rồi chọn lệnh — Discord tự gợi ý cú pháp.\n"
-            "› Nhiều lệnh có alias để gõ tắt.\n"
-            "› Ví dụ: `.coin` · `.masoi` · `/help`"
-        ),
-        inline=False
-    )
-    home.set_footer(text="KS-BOT  •  Chọn mục bên dưới để xem thêm ✨")
+    home.set_image(url=HELP_GIF)
+    home.set_footer(text="Nút xanh = trang đang xem • ✖️ để đóng")
 
     werewolf = discord.Embed(title="🐺 MA SÓI", description=_DIV, color=0x8E44AD)
     werewolf.add_field(
@@ -1283,7 +1336,10 @@ def help_pages_v2():
     utility.add_field(name="📅 Lương", value="`.daily` `/daily`", inline=True)
     utility.add_field(
         name="🔒 Ghi chú",
-        value="Khi kênh bị `.blockbot`, các lệnh **quản trị / AFK / clear / delreply** của chủ vẫn dùng được.",
+        value=(
+            "Kênh bị `.blockbot` chỉ còn dùng được `.av` `.afk` `.name` và **autoreply**. "
+            "Người đang AFK bị ping/reply thì bot vẫn báo lý do."
+        ),
         inline=False
     )
 
@@ -1331,12 +1387,57 @@ def help_pages_v2():
     }
 
 
+class HelpNavView(discord.ui.View):
+    def __init__(self, author_id, current="home"):
+        super().__init__(timeout=180)
+        self.author_id = author_id
+        self.message = None
+        self._build(current)
+
+    def _build(self, current):
+        self.clear_items()
+        for i, (key, emoji) in enumerate(HELP_PAGE_ORDER):
+            btn = discord.ui.Button(
+                emoji=emoji, row=i // 5,
+                style=discord.ButtonStyle.primary if key == current else discord.ButtonStyle.secondary,
+            )
+            btn.callback = self._make_cb(key)
+            self.add_item(btn)
+        close = discord.ui.Button(emoji="✖️", style=discord.ButtonStyle.danger, row=1)
+        close.callback = self._close
+        self.add_item(close)
+
+    def _make_cb(self, key):
+        async def cb(interaction):
+            self._build(key)
+            await interaction.response.edit_message(embed=help_pages_v2()[key], view=self)
+        return cb
+
+    async def _close(self, interaction):
+        await interaction.response.edit_message(view=None)
+        self.stop()
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Menu của người khác, gõ `.help` để mở menu riêng nhé.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        for c in self.children:
+            c.disabled = True
+        try:
+            if self.message:
+                await self.message.edit(view=self)
+        except Exception:
+            pass
+
+
 @bot.hybrid_command(name="help")
 async def cmd_help_v2(ctx):
     """Mở menu trợ giúp."""
-    embed = help_pages_v2()["home"]
-    embed.set_thumbnail(url=ctx.author.display_avatar.url)
-    await ctx.send(embed=embed, view=HelpHomeView())
+    view = HelpNavView(ctx.author.id)
+    view.message = await ctx.send(embed=help_pages_v2()["home"], view=view)
 
 
 # ==========================================
@@ -1364,25 +1465,11 @@ async def on_member_update(before, after):
             pass
 
 
-# Kênh bị .blockbot vẫn cho phép các lệnh quản trị/AFK này.
-_BLOCKED_CHANNEL_ALLOWED_COMMANDS = {
-    "afk", "xtn", "clear", "addrole", "delrole", "kenhlixi",
-    "khoamom", "unkhoamom", "khoachat", "mute", "timeout", "unmute",
-    "ban", "unban", "kick", "clbot", "dclbot", "blockbot", "unblockbot", "lock", "unlock",
-    "welcome", "chao", "autoreply", "trl", "tutraloi",
-}
-
-
-def _command_name_from_message(message):
-    content = (message.content or "").lstrip()
-    if not content.startswith((".", "!")):
-        return ""
-    return content[1:].split(None, 1)[0].lower() if content[1:].strip() else ""
-
-
 @bot.event
 async def on_message(message):
-    # --- Kênh bị cấm bot ---
+    # ===== KÊNH BỊ CẤM BOT =====
+    # Chỉ chạy: AFK + lệnh .av/.afk/.name (+ blockbot/unblockbot). Không EXP, không streak, không Ma Sói.
+    # Autoreply là cog riêng nghe on_message qua listener nên không bị chặn ở đây.
     if message.guild and message.channel.id in BOT_BLOCKED_CHANNELS.get(message.guild.id, set()):
         if message.author.bot:
             # Dự phòng: bot có quyền Administrator vẫn thấy kênh → xóa tin của nó.
@@ -1392,10 +1479,10 @@ async def on_message(message):
                 except Exception:
                     pass
             return
-        if is_bot_command_message(message):
-            if _command_name_from_message(message) in _BLOCKED_CHANNEL_ALLOWED_COMMANDS:
-                await bot.process_commands(message)
-            return
+        await _afk_handle(message)
+        if is_bot_command_message(message) and _command_name_from_message(message) in _BLOCKED_ALLOWED_PREFIX:
+            await bot.process_commands(message)
+        return
 
     if message.author.bot:
         return
@@ -1420,23 +1507,7 @@ async def on_message(message):
             except Exception:
                 pass
 
-    # AFK: tự gỡ khi nhắn tin
-    if uid_str in AFK_USERS:
-        afk_info = AFK_USERS.pop(uid_str)
-        try:
-            if message.author != message.guild.owner and message.guild.me.guild_permissions.manage_nicknames:
-                await message.author.edit(nick=afk_info["old_nick"], reason="Tự động gỡ AFK khi nhắn tin")
-        except Exception:
-            pass
-        await message.channel.send(f"👋 Chào mừng **{message.author.mention}** đã quay lại! Đã tắt chế độ AFK.", delete_after=6)
-
-    # AFK: báo khi bị tag
-    if message.mentions:
-        for mentioned_user in message.mentions:
-            m_id = str(mentioned_user.id)
-            if m_id in AFK_USERS:
-                await message.channel.send(f"💤 **{mentioned_user.display_name}** đang bận AFK với lý do: *{AFK_USERS[m_id]['reason']}*")
-
+    await _afk_handle(message)
     await process_user_streak_and_nickname(message.author)
     await bot.process_commands(message)
 
@@ -1459,7 +1530,6 @@ async def on_ready():
 
     await start_lixi_task_once()
 
-    # Đồng bộ slash command (/) lên Discord
     try:
         synced = await bot.tree.sync()
         print(f"✅ Đã đồng bộ {len(synced)} slash command.")
@@ -1550,7 +1620,7 @@ def dashboard_log_activity(user, action):
 
 @bot.event
 async def on_command_completion(ctx):
-    dashboard_log_activity(ctx.author, ctx.message.content)
+    dashboard_log_activity(ctx.author, ctx.message.content if ctx.message else ctx.command)
 
 
 def _dashboard_error_text(e):
@@ -1641,7 +1711,6 @@ async def main():
         try:
             await bot.start(TOKEN)
         except discord.HTTPException as e:
-            # 429 từ Cloudflare = IP host bị Discord chặn → thoát mã 42 cho keep_alive.py chờ lâu.
             if e.status == 429:
                 import sys as _sys
                 print("[RateLimit] Discord/Cloudflare đang chặn IP host (429). Thoát mã 42 để chờ lâu rồi thử lại.")
